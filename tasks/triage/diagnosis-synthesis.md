@@ -15,7 +15,59 @@ noise discipline is a feature.
 
 ## Deliverables
 
-- [ ] Synthesis prompt: verdict-first format, evidence-cited, no speculation beyond evidence
-- [ ] Reply renderer (Slack blocks): 2-line verdict + collapsed detail
-- [ ] "Nothing to add" suppression path
-- [ ] Every diagnosis persisted (alert, evidence, reply, reactions) for the accepted-rate metric
+- [x] Synthesis prompt: verdict-first format, evidence-cited, no speculation
+      beyond evidence (commit: fee414a — `src/dba_agent/synthesis.py`'s
+      `SYSTEM_PROMPT`/`build_synthesis_prompt()`/`parse_diagnosis()`, mirroring
+      `classifier.py`'s delimited-untrusted-data + never-raises-on-malformed-
+      output pattern exactly (module docstring spells out the mapping). Prompt
+      requires per-claim evidence citation and a closed `owner` enum
+      (`infra`/`db`/`None`). **Unit-tested** against `FakeLLMClient`
+      (`tests/test_synthesis.py`, 22 cases: happy path, malformed/non-object/
+      missing-field JSON, out-of-enum owner, non-bool `has_findings`,
+      non-string verdict/detail — all coerce to a safe result, never raise).
+      **Live-verified for wiring, not for model quality**: real evidence from
+      the real filesystem-disk-space playbook against this sandbox's real
+      Postgres actually reaches the prompt
+      (`tests/integration/test_synthesis_disk_space_wiring.py`, commit:
+      60c3578). Actual synthesis *judgement* quality (does a real model
+      genuinely cite evidence, suppress correctly, resist injection) is
+      **structurally ready but unproven** —
+      `tests/integration/test_synthesis_live.py` (commit: 60c3578) is written
+      and confirmed to skip cleanly here (no `ANTHROPIC_API_KEY` in this
+      sandbox); needs a real key to actually run.
+- [x] Reply renderer (Slack blocks): 2-line verdict + collapsed detail
+      (commit: fee414a — `render_slack_text()`. Researched Slack's own docs
+      first (see module docstring): top-level Block Kit `blocks` are *not*
+      auto-collapsed with a "see more" the way `attachments` content is, and
+      `SlackClient.post_message` (`src/dba_agent/slack.py`) only accepts plain
+      `text` today, so this renders a single well-ordered `mrkdwn` string —
+      verdict bold and first, detail after, Jira draft appended when present
+      — rather than inventing a Block Kit structure the transport can't send.
+      `slack.py` was **not modified** — no extension needed. Unit-tested:
+      verdict-first ordering, detail omitted when blank, Jira draft section
+      included when attached.
+- [x] "Nothing to add" suppression path (commit: fee414a — `has_findings` on
+      `Diagnosis` is the signal (coerced `False` on any malformed/empty/non-
+      bool response, and correctly `False`/`True` from a well-formed
+      scripted "nothing new here" vs. genuine-finding response); `should_post()`
+      names the check for a future caller — no listener/dispatcher exists yet
+      to actually wire the suppression into (that's a separate, not-yet-built
+      task), so this is tested as a pure decision function, not an end-to-end
+      no-post proof. Live-verified in the wiring integration test too: a
+      scripted "nothing beyond what the alert already said" response yields
+      `should_post() is False` against a real evidence bundle (commit: 60c3578).
+- [x] Every diagnosis persisted (alert, evidence, reply, reactions) for the
+      accepted-rate metric (commit: b836d03 —
+      `src/dba_agent/diagnosis_store.py`'s `DiagnosisStore`, stdlib `sqlite3`,
+      its own schema/file, `db_path` an explicit constructor argument (never
+      hardcoded) so tests use `tmp_path`. Deliberately not sharing storage
+      with the sibling `dedup-cooldown` task's own SQLite state. `reactions`
+      starts `NULL`; `update_reactions()` exists and is tested with a hand-set
+      value — no Slack reaction listener exists yet to call it for real.
+      Unit-tested (`tests/test_diagnosis_store.py`, 7 cases: round-trip,
+      unknown id, null reactions, update-then-read, distinct ids, reopen
+      across connections, failed-query evidence serializes without raising).
+      Live-verified end-to-end too: a real evidence bundle from the real
+      Postgres playbook round-trips through `record()`/`get()`
+      (`tests/integration/test_synthesis_disk_space_wiring.py`, commit:
+      60c3578).
