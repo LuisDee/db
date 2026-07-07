@@ -8,24 +8,39 @@ only status, commit hashes as merge evidence. See
 
 ## POC dependency graph
 
+`depends_on` frontmatter is the source of truth; this diagram is kept
+in sync with it, not the other way around. `[x]` = done and merged.
+
 ```
-foundation/agent-skeleton
- ├── foundation/endpoint-registry ──┐
- ├── foundation/compose-stack ──────┼── foundation/integration-test-infra
- │                                  │        └── playbooks/playbook-framework
- │                                  │             ├── playbooks/playbook-disk-space      ─┐
- │                                  │             ├── playbooks/playbook-replication-lag ─┤
- │                                  │             └── playbooks/playbook-tablespace-usage┤
- ├── listener/slack-listener ───────┘                                                    │
- │    └── triage/dedup-cooldown                                                          │
- └── listener/alert-classifier                                                           │
-      ├── triage/diagnosis-synthesis (also needs playbook-framework) ────────────────────┘
+foundation/agent-skeleton [x]
+ ├── foundation/endpoint-registry [x] ──┐
+ ├── foundation/compose-stack [x] ──────┼── foundation/integration-test-infra [x]
+ │                                      │        └── playbooks/playbook-framework [x]
+ │                                      │             ├── playbooks/playbook-disk-space [x]      ─┐
+ │                                      │             ├── playbooks/playbook-replication-lag      ─┤
+ │                                      │             └── playbooks/playbook-tablespace-usage     ┤
+ ├── listener/slack-listener                                                                      │
+ └── listener/alert-classifier [x]                                                                │
+      ├── triage/dedup-cooldown                                                                   │
+      ├── triage/diagnosis-synthesis (also needs playbook-framework [x]) ────────────────────────┘
       └── digest/noise-digest
 
-poc/e2e-demo ← diagnosis-synthesis + dedup-cooldown + compose-stack
-              + playbook-disk-space
+poc/e2e-demo ← diagnosis-synthesis + dedup-cooldown + compose-stack [x]
+              + playbook-disk-space [x]
      └── apply/runbook-apply-path (v2 write path, blocked on the demo)
 ```
+
+Note: `listener/slack-listener` is NOT a dependency of anything on the
+demo's critical path per its own frontmatter — `poc/e2e-demo` can be
+satisfied by the alert-injector (already built in compose-stack)
+driving the classifier/executor/synthesis chain directly, without a
+live Socket Mode listener. Build `slack-listener` separately if/when a
+genuinely live-Slack-driven demo (rather than script-driven) is wanted.
+
+Remaining on the critical path to `poc/e2e-demo`: `triage/dedup-cooldown`
+and `triage/diagnosis-synthesis` (both unblocked now that
+`alert-classifier` and `playbook-framework` are done), then `e2e-demo`
+itself.
 
 Everything except `apply/` is POC scope: prove the loop locally in
 containers before anything touches a real host. Further post-POC work
