@@ -6,3 +6,8 @@ __pycache__/
 .venv/
 build/
 dist/
+
+# local compose stack: real dev env file (secrets go here, never commit)
+# and the alert-injector's observable-output log.
+compose/.env
+compose/injector/out/*.json

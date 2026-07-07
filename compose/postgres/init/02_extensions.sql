@@ -1,0 +1,11 @@
+-- pg_stat_statements requires BOTH:
+--  1. shared_preload_libraries=pg_stat_statements at server start
+--     (set via `command:` in compose.yaml -- cannot be set with ALTER
+--     SYSTEM / CREATE EXTENSION alone, it needs a restart to take
+--     effect), AND
+--  2. CREATE EXTENSION in the target database (this file).
+-- Both are required for pg_stat_statements to actually populate; either
+-- alone leaves the catalog view empty or missing.
+--
+-- Idempotent: IF NOT EXISTS, safe to re-run via `make seed`.
+CREATE EXTENSION IF NOT EXISTS pg_stat_statements;

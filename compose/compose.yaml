@@ -1,0 +1,146 @@
+# Local proof environment for the DBA agent (tasks/foundation/compose-stack.md).
+#
+# "Nothing gets plugged into a real host until the loop is proven here"
+# (docs/dba-agent-direction.md). See compose/README.md for the full
+# layout, RAM budget, and what's live-verified vs. parse-only-verified
+# in this environment.
+#
+# Usage: via the root Makefile (`make up`, `make down`, `make seed`,
+# `make inject-alert TYPE=...`) -- see Makefile for the exact commands
+# this wraps.
+
+services:
+  agent:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?set in compose/.env, see compose/.env.example}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:?set in compose/.env, see compose/.env.example}
+    ports:
+      - "8080:8080"
+    mem_limit: 256m
+    restart: unless-stopped
+    # No depends_on yet: the agent skeleton (src/dba_agent/app.py) only
+    # runs a healthcheck server today. It doesn't connect to any of the
+    # DBs -- that wiring arrives with listener/slack-listener and
+    # playbooks/playbook-framework. Healthcheck comes from the image's
+    # own Dockerfile HEALTHCHECK.
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev_only_postgres_pw}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+    # shared_preload_libraries needs a server restart to take effect --
+    # it cannot be set via ALTER SYSTEM/CREATE EXTENSION alone, so it's
+    # passed here rather than in an init script. wal_level/max_wal_senders/
+    # max_replication_slots enable the postgres-replica streaming standby.
+    command: >
+      postgres
+      -c shared_preload_libraries=pg_stat_statements
+      -c wal_level=replica
+      -c max_wal_senders=10
+      -c max_replication_slots=10
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "5432:5432"
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    restart: unless-stopped
+
+  postgres-replica:
+    build:
+      context: ./postgres-replica
+    environment:
+      PGDATA: /var/lib/postgresql/data
+      PRIMARY_HOST: postgres
+      PRIMARY_PORT: "5432"
+      REPLICATION_USER: ${REPLICATION_USER:-replicator}
+      REPLICATION_PASSWORD: ${REPLICATION_PASSWORD:-dev_only_replicator_pw}
+      # POSTGRES_PASSWORD is unused by the replica (it never runs initdb
+      # itself -- pg_basebackup copies the primary's already-initialized
+      # data directory) but the base image's docker-entrypoint.sh checks
+      # for *some* auth-related env var to be present even on the
+      # standby path; harmless to set.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev_only_postgres_pw}
+    volumes:
+      - pgdata_replica:/var/lib/postgresql/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "5433:5432"
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    restart: unless-stopped
+
+  oracle:
+    image: gvenzl/oracle-free:23-slim
+    environment:
+      ORACLE_PASSWORD: ${ORACLE_PASSWORD:-DevOnly_Oracle_Pw1}
+    volumes:
+      - oracledata:/opt/oracle/oradata
+      - ./oracle/init:/container-entrypoint-initdb.d:ro
+    ports:
+      - "1521:1521"
+    mem_limit: 3g
+    mem_reservation: 2g
+    healthcheck:
+      # gvenzl/oracle-free ships its own healthcheck.sh. Oracle Free's
+      # first-boot database creation is slow (documented as taking up to
+      # 1-2 minutes even for the "Free" edition) -- start_period and
+      # retries are generous on purpose so `docker compose up --wait`
+      # doesn't give up mid-creation.
+      test: ["CMD", "healthcheck.sh"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 150s
+    restart: unless-stopped
+
+  questdb:
+    image: questdb/questdb
+    volumes:
+      - questdb_data:/var/lib/questdb
+    ports:
+      - "9000:9000"  # REST API + web console
+      - "8812:8812"  # PGWire
+      - "9009:9009"  # ILP ingestion (unused here, exposed for completeness)
+      - "9003:9003"  # min health server
+    mem_limit: 1g
+    healthcheck:
+      # questdb/questdb's runtime image is fedora-minimal/ubi-minimal
+      # based and does NOT ship curl or wget (verified against the
+      # upstream Dockerfile) -- this checks that the min health server's
+      # port is open via bash's /dev/tcp rather than depending on a tool
+      # that may not be there. See compose/README.md's "check this
+      # first" note: this line is parse-only-verified, not live-tested,
+      # in this environment. `make seed` does its own independent
+      # host-side readiness poll and does not depend on this healthcheck
+      # being correct.
+      test: ["CMD-SHELL", "bash -c '(echo > /dev/tcp/127.0.0.1/9003) 2>/dev/null'"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  pgdata_replica:
+  oracledata:
+  questdb_data:
