@@ -1,0 +1,10 @@
+.git
+tests
+docs
+tasks
+project-management
+.pytest_cache
+.ruff_cache
+__pycache__
+*.pyc
+.venv
