@@ -11,3 +11,7 @@ dist/
 # and the alert-injector's observable-output log.
 compose/.env
 compose/injector/out/*.json
+
+# agent's own runtime bookkeeping (cooldown.py's default CooldownStore
+# path) -- internal state, not source, never committed.
+var/
