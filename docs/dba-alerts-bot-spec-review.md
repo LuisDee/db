@@ -235,8 +235,10 @@ psycopg/python-oracledb under the read-only identity → Claude synthesizes
 a diagnosis from the evidence → threaded Slack reply: 2-line verdict +
 evidence + suggested fix *in words, with the SQL included as text*.
 No write path, no sqitch, no MCP, no MR. Python; Slack Bolt (Socket
-Mode); playbooks as data (YAML/SQL files in git, DBA-reviewed).
-Enable `pg_stat_statements` as part of this.
+Mode); playbooks as data (YAML/SQL files in git, DBA-reviewed). The LLM
+*selects and interprets* preset read-only queries — it does not author
+diagnostic SQL (the pattern Xata, HolmesGPT, and pganalyze all converged
+on). Enable `pg_stat_statements` as part of this.
 
 **v1.5 — trust builders:** 👍/👎 feedback capture; @-mention follow-up
 questions in the thread (bounded to the same read-only query catalogue);
@@ -255,6 +257,99 @@ retained from the spec.
 **Later — agentic expansion:** open-ended investigation beyond playbooks
 (Claude Agent SDK or MCP toolset), scheduled health sweeps, Phase-4-style
 narrow auto-apply. QuestDB when it exists as a concern.
+
+## Verification pass — what the research says (2026-07-07)
+
+Two research sweeps were run: one fact-checking the spec's tool claims,
+one surveying prior art. Findings, with the objections they bear on:
+
+### Tool claims
+
+* **`crystaldba/postgres-mcp` is stalled, not production-mature**
+  (→ objection 7). ~3k stars, but v0.3.0 (May 2025) is the last release
+  and the last commit to `main` was Jan 2026. Its own README hedges that
+  restricted mode may need further measures "to make sure that restricted
+  mode is safe to use with production databases", and notes protections
+  can be bypassed via unsafe stored-procedure languages. (Note: the
+  well-known Postgres-MCP SQL-injection write-up by Datadog concerned
+  *Anthropic's* reference server, since archived — not crystaldba's;
+  don't conflate them.)
+* **SQLcl MCP server is real but interactive-shaped** (→ objection 7).
+  Confirmed in SQLcl 25.2+, stdio transport **only** (no HTTP/SSE), one
+  full JVM per instance (JRE 17/21), credentials via pre-saved
+  connections, restrict level defaults to 4 (most restrictive) in MCP
+  mode, `DBTOOLS$MCP_LOG` + `V$SESSION.MODULE/ACTION` tagging confirmed.
+  Oracle positions it for interactive developer clients (Claude
+  Desktop/Code, VS Code), not embedded headless agents.
+* **sqitch is healthier than "crusty"** — v1.6.1 released Jan 2026,
+  actively maintained. But the Oracle friction is real and documented:
+  DBD::Oracle is a compiled Perl module with classic Instant Client
+  install pain, and on Oracle the sqitch registry lands **in the
+  connected user's own schema** (long-standing issues #238/#172;
+  workaround is a dedicated deploy user). Oracle DDL/DCL autocommits, so
+  sqitch's transactional deploy guarantees don't apply there anyway
+  (→ objection 4).
+* **No citable community rule says "operational actions don't fit
+  migration tools"** — objection 3 stands on its own reasoning
+  (environment-specific, autocommit, non-revertible), not on an external
+  authority. Flagged for honesty.
+* **`gvenzl/oracle-free` is unambiguously fine for the POC**
+  (→ objection 9). Apache-2.0 build scripts, Oracle Free Use Terms for
+  the database (free for dev/test/prod), and it is the *default image of
+  the official Testcontainers oracle-free module*. Caps: 2 CPU threads,
+  2 GB RAM, 12 GB data — irrelevant for a POC. The spec's
+  "licensing-encumbered" claim is wrong.
+
+### Prior art — and what everyone converges on
+
+* **The architectural convergence is exactly objections 5 + 7.** Every
+  serious system in this space — HolmesGPT (CNCF Sandbox, the closest
+  analog: "toolsets" of curated read-only queries + natural-language
+  "runbooks" steering an agentic loop), pganalyze (deterministic
+  advisors first, LLM synthesis second; they argue continuous free-form
+  LLM analysis is too expensive to run in the background), Datadog Bits
+  AI SRE, Xata Agent — lands on: **curated parameterized read-only
+  tools, NL playbooks, LLM for orchestration and synthesis, hard
+  read-only boundary, remediation as reviewable artifacts.** Nobody
+  ships free-form LLM-written SQL against prod. Notably, Xata's agent —
+  the spec's cited exemplar — had the LLM *pick from preset read-only
+  queries*, never write SQL for diagnostics. That's a stronger guardrail
+  than the spec's "LLM writes SQL, validate afterwards", and it's the
+  right default here too.
+* **Xata Agent was archived June 2026** (~15 months after launch).
+  Treat it as a design reference, not a live dependency or proof the
+  product shape sustains. The shapes still shipping are pganalyze-style
+  deterministic-checks-plus-synthesis and HolmesGPT-style
+  curated-toolsets-plus-runbooks.
+* **No Oracle equivalent exists.** Oracle ships building blocks (SQLcl
+  MCP, ADB MCP, DB skills) but nobody ships an Oracle alert-triage bot.
+  The Oracle half of this project is a genuine gap — one more reason not
+  to defer Oracle behind a Postgres-only POC.
+* **Slack mechanics, confirmed + one new trap** (→ objection 6). Socket
+  Mode is the standard choice for internal no-ingress bots (outbound
+  WebSocket, no public URL, no signature verification); dedup on
+  `event_id` is still on you (3s ack, 3 retries). New trap: **messages
+  posted by incoming webhooks don't expose a usable `ts` to another
+  app**, so a bot can't trivially thread onto them — either subscribe to
+  `message.channels` and match the alert message, or (better) have the
+  agent receive the alert directly from Alertmanager and post/own the
+  alert thread itself.
+* **Claude Agent SDK is a credible harness** for v1.5+: hooks can
+  hard-block tool calls in code (not prompts), tool allowlists give a
+  read-only agent by construction, and resumable sessions map neatly
+  onto "continue the investigation in this Slack thread". For a v1 with
+  ~a dozen curated queries, a plain API tool-use loop is equally viable;
+  the SDK's value grows with investigation length and tool count.
+* **Trust lessons from teams who built this** (→ objection 10). Cleric:
+  "after two or three false positives, engineers stop listening" — and
+  LLM self-reported confidence is unreliable; derive confidence from
+  evidence (corroborating sources), not from asking the model.
+  incident.io: deterministic retrieval beat embeddings for incident
+  context; the diagnosis must land in the on-call's existing thread, not
+  a separate surface. Datadog/incident.io/HolmesGPT all evaluate against
+  ground truth after the fact — log every diagnosis and the eventually
+  confirmed cause, and make *diagnosis-accepted rate* and
+  time-to-diagnosis the success metrics, not message volume.
 
 ## Questions to answer before rewriting the spec
 
