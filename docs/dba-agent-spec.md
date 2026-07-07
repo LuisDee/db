@@ -142,11 +142,20 @@ rendered_sql: |
 ```
 
 The **action catalogue** (`actions/catalogue/`) defines each action
-type once: parameter schema, SQL template per engine, allowed
-environments, required preconditions, whether a meaningful revert
-exists. DBAs review the *template* once; each *invocation* MR is a
-parameter review, which is much easier to approve safely than free-form
-SQL.
+type once: parameter schema (typed, bounded — e.g. `size` has a hard
+maximum; identifiers must match a whitelist pattern and exist in the
+live data dictionary), SQL template per engine, allowed environments,
+required preconditions, whether a meaningful revert exists. DBAs review
+the *template* once; each *invocation* MR is a parameter review, which
+is much easier to approve safely than free-form SQL.
+
+**`rendered_sql` is for the human reviewer only — it is never
+executed.** At apply time the applier re-renders the SQL itself from
+the catalogue template plus the schema-validated params, and refuses to
+run if its rendering doesn't match the file's `rendered_sql`
+byte-for-byte. Consequence: hand-edited or LLM-mangled SQL in an action
+file *cannot reach a database* — the only executable SQL in the entire
+system is a reviewed catalogue template with validated parameters.
 
 ### 5.2 The gate
 
@@ -217,6 +226,54 @@ executes statements one at a time. Sequence:
 | DBA clicks the wrong manual job | Job name embeds action + target; one action file per MR keeps jobs unambiguous |
 | Revert needed | Catalogue marks reversibility per action type; irreversible actions say so in the MR and their "revert" fails loudly with instructions, never a silent no-op |
 
+### 5.6 Blast-radius containment — the apply account is not god
+
+Layered so that "the wrong SQL goes through" is structurally
+impossible, not just unlikely, and a leaked credential is nearly
+useless:
+
+1. **Credential exposure**: apply credentials are GitLab
+   protected+masked variables, which only exist on protected-branch
+   pipelines — a pipeline from any unmerged branch *has no prod
+   credential at all*. Separate credentials per environment; prod creds
+   never appear in MR (pre-merge) pipelines.
+2. **Applier-level**: template-only execution (§5.1 — the free-text
+   SQL is never run); single statement per action; statement-type check
+   (an `add_datafile` action that doesn't parse as `ALTER TABLESPACE`
+   is refused); deny-list backstop (`DROP`, `TRUNCATE`, `GRANT`,
+   `CREATE USER`, PL/SQL blocks) even though templates make it
+   unreachable.
+3. **DB-enforced — the strongest layer.** The target state for prod:
+   the apply account gets **no direct DDL privileges at all**. Each
+   catalogue action is deployed into the database as a stored procedure
+   in a locked admin schema — Oracle: definer's-rights package
+   `dba_actions.add_datafile(p_tablespace, p_size_gb)`; Postgres:
+   `SECURITY DEFINER` functions — which validates its arguments
+   (existence, whitelist, size caps) *inside the database* and only
+   then executes the operation. The apply account is granted **EXECUTE
+   on those procedures and nothing else**. Now even a fully compromised
+   applier + credential can only invoke the finite, DBA-authored,
+   argument-capped action set — arbitrary SQL is refused by the engine
+   itself. The procedures are versioned and deployed from
+   `provisioning/` in this repo, so the catalogue exists twice: as
+   templates in git (review surface) and as procedures in the DB
+   (enforcement surface). v2.0 may ship with direct scoped grants +
+   layer-2 gates to keep the first cut small; procedure enforcement is
+   the prod bar.
+4. **Role hardening**: Postgres — `CONNECTION LIMIT 1`,
+   `ALTER ROLE ... SET statement_timeout / lock_timeout`, pg_hba
+   restricted to the runner segment with TLS required. Oracle — profile
+   with `SESSIONS_PER_USER 1` and connect-time limits, network path
+   restricted to the runner segment. A stolen password that can't
+   connect from anywhere else, can't hold locks long, and can only call
+   capped procedures is a contained incident.
+5. **Residual risk stated honestly**: with all layers on, the failure
+   that remains is *right action, wrong parameters* (e.g. adding 8G to
+   the wrong tablespace) — bounded by parameter caps, apply-time
+   preconditions, two human gates, and the audit/Slack trail for fast
+   detection. That is a radically smaller surface than a DDL-capable
+   account running reviewed-but-arbitrary SQL.
+
 ## 6. Identities and service accounts
 
 Per target database, two provisioned accounts (creation SQL lives in
@@ -225,7 +282,7 @@ this repo under `provisioning/`, reviewed like any change):
 | Account | Postgres | Oracle | Used by |
 |---|---|---|---|
 | `dba_agent_ro` | `pg_monitor` + `pg_read_all_stats` + `pg_read_all_settings`; no table-data grants | `CREATE SESSION`, `SELECT_CATALOG_ROLE`, `SELECT ANY DICTIONARY` | agent (triage, digest, sweep) |
-| `dba_agent_apply` | scoped to the action catalogue (e.g. `CREATE` on target schemas) | scoped where possible; tablespace/datafile ops need `ALTER TABLESPACE` etc. — where scoping runs out, auditing covers it (below) | applier (CI job only) |
+| `dba_agent_apply` | target state: `EXECUTE` on the `SECURITY DEFINER` action functions only (§5.6); interim: narrow per-action grants | target state: `EXECUTE` on the `dba_actions` definer's-rights package only (§5.6) — no direct DDL privileges, never `DBA`/`SYSDBA`; interim: exactly the per-action system privileges (e.g. `ALTER TABLESPACE`) | applier (CI job only) |
 
 QuestDB: read via its SQL interface (`table_storage()` etc.) with a
 read-only user where the deployment supports it; QuestDB writes are out
