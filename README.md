@@ -13,7 +13,9 @@ History: original spec v0.1 + adversarial review, also in `docs/`.
 ## Hard rules
 
 - The agent never holds write credentials; writes happen only in a
-  post-approval CI job under a separate identity.
+  post-approval CI job under a separate identity — and that identity is
+  not god: see `docs/apply-path-security-model.md`, including the
+  go-live checklist that gates any production wiring.
 - The LLM never authors diagnostic SQL — it selects and interprets
   DBA-reviewed playbook queries and action templates.
 - No SSH to DB hosts; host facts come from the Check_MK API.

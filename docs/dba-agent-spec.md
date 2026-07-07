@@ -228,6 +228,11 @@ executes statements one at a time. Sequence:
 
 ### 5.6 Blast-radius containment — the apply account is not god
 
+> Full model with worked Oracle/Postgres provisioning examples and the
+> **production go-live checklist**: `apply-path-security-model.md`.
+> That document is the durable record — production wiring must follow
+> its §6 checklist.
+
 Layered so that "the wrong SQL goes through" is structurally
 impossible, not just unlikely, and a leaked credential is nearly
 useless:

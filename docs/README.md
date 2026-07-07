@@ -10,3 +10,8 @@ Design history for the DBA agent, in chronological order:
   v0.1).
 - `dba-agent-spec.md` — **spec v0.2, canonical. Start here.** Work
   items live in `tasks/`.
+- `apply-path-security-model.md` — the write-path security model:
+  template-only execution, the four containment layers, worked
+  Oracle/Postgres least-privilege examples, and the **production
+  go-live checklist**. Required reading before wiring anything into a
+  real database.
