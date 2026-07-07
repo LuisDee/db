@@ -136,3 +136,119 @@ def test_query_result_duration_is_recorded():
     bundle = run_playbook(playbook, _endpoint(), runner)
 
     assert bundle.results[0].duration_seconds >= 0.0
+
+
+class _FakeOracleCursor:
+    """Drives OracleRunner.run()'s real code path without a live Oracle
+    instance -- closes a gap an adversarial review caught: OracleRunner
+    had zero references outside its own definition, so its actual
+    control flow (call_timeout conversion, best-effort read-only,
+    column/row extraction) had never executed once.
+    """
+
+    def __init__(self, rows, column_names, raise_on_sql=None):
+        self._rows = rows
+        self.description = [(name,) for name in column_names] if column_names else None
+        self.executed = []
+        self._raise_on_sql = raise_on_sql or {}
+
+    def execute(self, sql):
+        self.executed.append(sql)
+        if sql in self._raise_on_sql:
+            raise self._raise_on_sql[sql]
+
+    def fetchall(self):
+        return self._rows
+
+
+class _FakeOracleConnection:
+    def __init__(self, cursor):
+        self._cursor = cursor
+        self.call_timeout = None
+
+    def cursor(self):
+        return self._cursor
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+
+def test_oracle_runner_sets_call_timeout_in_milliseconds(monkeypatch):
+    import oracledb
+
+    monkeypatch.setenv("TEST_CRED", "s3cr3t")
+
+    cursor = _FakeOracleCursor(rows=((1,),), column_names=("col",))
+    conn = _FakeOracleConnection(cursor)
+    monkeypatch.setattr(oracledb, "connect", lambda **kwargs: conn)
+
+    from dba_agent.executor import OracleRunner
+
+    OracleRunner().run(_endpoint(engine="oracle"), PlaybookQuery("q", "SELECT 1 FROM dual"), timeout_seconds=2.5)
+
+    assert conn.call_timeout == 2500
+
+
+def test_oracle_runner_executes_query_and_extracts_columns_and_rows(monkeypatch):
+    import oracledb
+
+    monkeypatch.setenv("TEST_CRED", "s3cr3t")
+
+    cursor = _FakeOracleCursor(rows=((1, "a"), (2, "b")), column_names=("id", "label"))
+    monkeypatch.setattr(oracledb, "connect", lambda **kwargs: _FakeOracleConnection(cursor))
+
+    from dba_agent.executor import OracleRunner
+
+    columns, rows = OracleRunner().run(
+        _endpoint(engine="oracle"), PlaybookQuery("q", "SELECT id, label FROM t"), timeout_seconds=5.0
+    )
+
+    assert columns == ("id", "label")
+    assert rows == ((1, "a"), (2, "b"))
+    assert "SELECT id, label FROM t" in cursor.executed
+
+
+def test_oracle_runner_tolerates_read_only_statement_failure(monkeypatch):
+    """Best-effort defence in depth (executor.py's own comment): if
+    SET TRANSACTION READ ONLY fails (e.g. not the first statement in a
+    pooled session), the actual query must still run -- never fatal.
+    """
+    import oracledb
+
+    monkeypatch.setenv("TEST_CRED", "s3cr3t")
+
+    cursor = _FakeOracleCursor(
+        rows=((1,),),
+        column_names=("col",),
+        raise_on_sql={"SET TRANSACTION READ ONLY": oracledb.Error("not first in transaction")},
+    )
+    monkeypatch.setattr(oracledb, "connect", lambda **kwargs: _FakeOracleConnection(cursor))
+
+    from dba_agent.executor import OracleRunner
+
+    columns, rows = OracleRunner().run(
+        _endpoint(engine="oracle"), PlaybookQuery("q", "SELECT 1 FROM dual"), timeout_seconds=1.0
+    )
+
+    assert rows == ((1,),)  # the real query still executed despite the read-only attempt failing
+    assert "SELECT 1 FROM dual" in cursor.executed
+
+
+def test_oracle_runner_does_not_swallow_the_actual_query_failure(monkeypatch):
+    import oracledb
+
+    monkeypatch.setenv("TEST_CRED", "s3cr3t")
+
+    cursor = _FakeOracleCursor(
+        rows=(), column_names=None, raise_on_sql={"SELECT 1 FROM broken": oracledb.Error("ORA-00942")}
+    )
+    monkeypatch.setattr(oracledb, "connect", lambda **kwargs: _FakeOracleConnection(cursor))
+
+    from dba_agent.executor import OracleRunner
+    import pytest
+
+    with pytest.raises(oracledb.Error, match="ORA-00942"):
+        OracleRunner().run(_endpoint(engine="oracle"), PlaybookQuery("q", "SELECT 1 FROM broken"), timeout_seconds=1.0)

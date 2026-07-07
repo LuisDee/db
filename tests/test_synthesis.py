@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 
+from datetime import datetime, timezone
+
+from dba_agent.checkmk import FakeCheckMkClient
 from dba_agent.classifier import Classification
 from dba_agent.executor import EvidenceBundle, QueryResult
 from dba_agent.jira_draft import JiraDraft
@@ -214,6 +217,93 @@ def test_synthesize_attaches_jira_draft_when_infra_owned_with_findings():
     assert "/pgdata" in diagnosis.jira_draft.title
 
 
+def test_synthesize_threads_checkmk_history_into_the_time_to_full_estimate():
+    """Closes a gap an adversarial review caught: checkmk.py and
+    capacity.py existed, were individually unit-tested, and were never
+    actually called from synthesize(). This proves the wiring, not just
+    the two modules in isolation.
+    """
+    llm = FakeLLMClient(
+        responses=[
+            json.dumps(
+                {
+                    "verdict": "Filesystem filling fast.",
+                    "detail": "database_size shows 900MB, per database_size query.",
+                    "has_findings": True,
+                    "owner": "infra",
+                }
+            )
+        ]
+    )
+    classification = _classification(host="pg01", subject="/pgdata")
+    evidence = _bundle(_ok("database_size", ("size_bytes",), ((900_000_000,),)))
+    # Steadily increasing used_percent over 3 hours -> a real, computable
+    # linear growth rate, not a degenerate single-point series.
+    history = (
+        (datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc), 80.0),
+        (datetime(2026, 1, 1, 1, 0, tzinfo=timezone.utc), 85.0),
+        (datetime(2026, 1, 1, 2, 0, tzinfo=timezone.utc), 90.0),
+    )
+    checkmk = FakeCheckMkClient(responses={}, history_responses={("pg01", "/pgdata", 24): history})
+
+    diagnosis = synthesize(classification, evidence, llm, checkmk_client=checkmk)
+
+    assert checkmk.history_calls == [("pg01", "/pgdata", 24)]
+    assert diagnosis.jira_draft is not None
+    assert "Time-to-full" in diagnosis.jira_draft.body
+    assert "not available" not in diagnosis.jira_draft.body
+
+
+def test_synthesize_without_checkmk_client_keeps_original_not_available_behaviour():
+    """The default (no checkmk_client passed) must behave exactly as
+    before this change -- every pre-existing caller/test keeps working
+    unmodified.
+    """
+    llm = FakeLLMClient(
+        responses=[
+            json.dumps(
+                {
+                    "verdict": "Filesystem filling fast.",
+                    "detail": "database_size shows 900MB, per database_size query.",
+                    "has_findings": True,
+                    "owner": "infra",
+                }
+            )
+        ]
+    )
+    classification = _classification(host="pg01", subject="/pgdata")
+    evidence = _bundle(_ok("database_size", ("size_bytes",), ((900_000_000,),)))
+
+    diagnosis = synthesize(classification, evidence, llm)
+
+    assert diagnosis.jira_draft is not None
+    assert "not available" in diagnosis.jira_draft.body
+
+
+def test_synthesize_swallows_a_checkmk_failure_without_breaking_synthesis():
+    llm = FakeLLMClient(
+        responses=[
+            json.dumps(
+                {
+                    "verdict": "Filesystem filling fast.",
+                    "detail": "database_size shows 900MB, per database_size query.",
+                    "has_findings": True,
+                    "owner": "infra",
+                }
+            )
+        ]
+    )
+    classification = _classification(host="pg01", subject="/pgdata")
+    evidence = _bundle(_ok("database_size", ("size_bytes",), ((900_000_000,),)))
+    # No scripted response for this (host, mountpoint, hours) -> FakeCheckMkClient raises.
+    checkmk = FakeCheckMkClient(responses={})
+
+    diagnosis = synthesize(classification, evidence, llm, checkmk_client=checkmk)
+
+    assert diagnosis.jira_draft is not None
+    assert "not available" in diagnosis.jira_draft.body
+
+
 def test_synthesize_does_not_attach_jira_draft_when_no_findings_even_if_infra():
     llm = FakeLLMClient(
         responses=[
@@ -252,6 +342,22 @@ def test_should_post_false_when_no_findings():
 
 
 # --- render_slack_text --------------------------------------------------------
+
+
+def test_render_slack_text_escapes_mrkdwn_special_characters():
+    """threat-model M10: a crafted object name/error string containing
+    something link-shaped must not render as a live Slack link.
+    """
+    diagnosis = Diagnosis(
+        verdict="Table <http://evil.example/|click here> & friends is huge",
+        detail="error: value > threshold & < limit",
+        has_findings=True,
+    )
+    text = render_slack_text(diagnosis)
+    assert "<http://evil.example/|click here>" not in text
+    assert "&lt;http://evil.example/|click here&gt;" in text
+    assert "&amp;" in text
+    assert "value &gt; threshold &amp; &lt; limit" in text
 
 
 def test_render_slack_text_puts_verdict_first_and_bold():

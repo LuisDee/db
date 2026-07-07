@@ -45,10 +45,13 @@ from pathlib import Path
 logger = logging.getLogger("dba_agent")
 
 # Default location for the agent's own bookkeeping store. Always passed
-# explicitly by the caller (constructor parameter, never hardcoded
-# inside a method) so tests can point at tmp_path and production can
-# point at a real persistent volume -- see config.py for the same
-# explicit-injection convention used elsewhere in this repo.
+# explicitly by the caller -- CooldownStore.__init__ has no default
+# argument for this (an adversarial review caught an earlier version
+# that did, contradicting this very comment) -- so tests can point at
+# tmp_path and production can point at a real persistent volume; see
+# config.py for the same explicit-injection convention used elsewhere
+# in this repo. DEFAULT_DB_PATH is a suggested value for callers to
+# pass explicitly, not a signature default.
 DEFAULT_DB_PATH = Path("var/cooldown.sqlite3")
 
 # --- Cooldown windows --------------------------------------------------
@@ -172,7 +175,7 @@ class CooldownStore:
 
     def __init__(
         self,
-        db_path: Path | str = DEFAULT_DB_PATH,
+        db_path: Path | str,
         *,
         default_cooldown: timedelta = DEFAULT_COOLDOWN,
         class_cooldowns: dict[str, timedelta] | None = None,

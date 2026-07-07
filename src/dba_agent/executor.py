@@ -122,7 +122,24 @@ class PostgresRunner:
         import psycopg
 
         dsn = _build_postgres_dsn(endpoint, endpoint.resolve_credential())
-        with psycopg.connect(dsn) as conn:
+        try:
+            conn = psycopg.connect(dsn)
+        except Exception as exc:
+            # A connection failure's exception message must never become
+            # a vector for `dsn` (which embeds the resolved password) to
+            # leak into QueryResult.error and from there into synthesis
+            # prompts, Jira drafts, and Slack messages -- all of which
+            # sit outside logging_setup.py's SecretMaskingFilter (that
+            # filter only covers the dba_agent logger, not values passed
+            # in-band through return values/exceptions). Verified
+            # empirically that psycopg's own error text does not include
+            # the password, but relying on that holding across driver
+            # versions/error paths forever is fragile -- fail safe.
+            raise RuntimeError(
+                f"connection to postgres endpoint {endpoint.key!r} failed"
+            ) from exc
+
+        with conn:
             # Defence in depth (spec: "connections opened read-only where
             # the driver supports it") -- the real enforcement is that
             # dba_agent_ro has no write grants at all; this just makes a

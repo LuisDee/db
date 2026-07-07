@@ -91,3 +91,33 @@ def test_evidence_bundle_redacts_a_real_captured_literal(postgres_dsn):
             assert "app.orders" in query_text  # the identifier must survive
     finally:
         held_conn.close()
+
+
+def test_connection_failure_never_leaks_the_password_into_query_result_error(postgres_dsn):
+    """Adversarial-review fix: a bad credential's connection failure must
+    not put the resolved password into QueryResult.error, which flows
+    on into synthesis prompts, Jira drafts, and Slack messages -- all
+    outside logging_setup.py's SecretMaskingFilter. Uses a genuinely
+    wrong password against the real server to prove this against real
+    psycopg behavior, not a mocked exception.
+    """
+    os.environ["PG_TEST_BAD_PASSWORD"] = "definitely-the-wrong-password"
+    base = postgres_dsn.split(" user=")[0]
+    endpoint = Endpoint(
+        key="it-postgres-bad-auth",
+        engine="postgres",
+        dsn=base,
+        credential_ref="PG_TEST_BAD_PASSWORD",
+        tier="dev",
+    )
+    playbook = Playbook(
+        key="it-check-bad-auth",
+        queries={"postgres": (PlaybookQuery(name="q", sql="SELECT 1"),)},
+    )
+
+    bundle = run_playbook(playbook, endpoint, PostgresRunner())
+
+    assert not bundle.any_succeeded
+    error = bundle.results[0].error
+    assert "definitely-the-wrong-password" not in error
+    assert "it-postgres-bad-auth" in error  # sanitized message still names the endpoint

@@ -48,10 +48,16 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, replace
 
+from dba_agent.capacity import CapacityEstimate, estimate_time_to_full
+from dba_agent.checkmk import CheckMkClient
 from dba_agent.classifier import Classification
 from dba_agent.executor import EvidenceBundle
 from dba_agent.jira_draft import JiraDraft, build_jira_draft
 from dba_agent.llm import LLMClient
+
+# filesystem_history reports used_percent, so 100.0 is always "full"
+# regardless of the filesystem's actual size.
+_FILESYSTEM_CAPACITY_PERCENT = 100.0
 
 _DATA_START = "<<<DBA_AGENT_DATA_START>>>"
 _DATA_END = "<<<DBA_AGENT_DATA_END>>>"
@@ -201,33 +207,73 @@ def parse_diagnosis(raw: str) -> Diagnosis:
     return Diagnosis(verdict=verdict, detail=detail, has_findings=has_findings, owner=owner)
 
 
-def synthesize(classification: Classification, evidence: EvidenceBundle, llm: LLMClient) -> Diagnosis:
+def _try_estimate_time_to_full(
+    classification: Classification,
+    checkmk_client: CheckMkClient | None,
+    checkmk_history_hours: int,
+) -> CapacityEstimate | None:
+    """Best-effort only: no checkmk_client, no host, or no subject means
+    there's nothing to look up (a caller not wired to Check_MK yet --
+    e.g. every test in this repo before this function existed -- must
+    keep working exactly as before, hence this returns None rather than
+    raising). A live Check_MK request failure is swallowed the same way:
+    a missing time-to-full estimate degrades the Jira draft to its
+    existing honest "not available" section (jira_draft.py's
+    _time_to_full_section), it must never take down synthesis entirely.
+    """
+    if checkmk_client is None or not classification.host or not classification.subject:
+        return None
+    try:
+        history = checkmk_client.filesystem_history(
+            classification.host, classification.subject, checkmk_history_hours
+        )
+    except Exception:  # noqa: BLE001 - a Check_MK outage must not break synthesis
+        return None
+    return estimate_time_to_full(history, capacity=_FILESYSTEM_CAPACITY_PERCENT)
+
+
+def synthesize(
+    classification: Classification,
+    evidence: EvidenceBundle,
+    llm: LLMClient,
+    checkmk_client: CheckMkClient | None = None,
+    checkmk_history_hours: int = 24,
+) -> Diagnosis:
     """Full synthesis: build the prompt, call the model, parse the
     response defensively, and -- only when the diagnosis both found
     something new (has_findings) and identifies the fix as infra-owned,
     per docs/dba-agent-spec.md §4's "Jira draft when infra-owned" -- attach
     a Jira draft by calling jira_draft.build_jira_draft rather than
-    building a second drafting mechanism here. `estimate` is always None:
-    the linear capacity projection (src/dba_agent/capacity.py) is
-    playbook-specific history this generic synthesis step doesn't have;
-    build_jira_draft already renders an honest "not available" section
-    when estimate is None, so this is a correct, not a lossy, choice.
-    `mountpoint` uses classification.subject (the specific object the
-    alert names) since a generic Diagnosis has no dedicated mountpoint
-    field -- accurate for filesystem-disk-space alerts, a reasonable
-    stand-in for anything else infra-owned.
+    building a second drafting mechanism here.
+
+    `checkmk_client` is optional and defaults to None, preserving the
+    original always-estimate=None behaviour for any caller that doesn't
+    pass one (e.g. every existing test). When provided, and the
+    classification carries a host + subject (subject stands in for the
+    filesystem mountpoint -- accurate for filesystem-disk-space alerts,
+    a reasonable stand-in for anything else infra-owned), this actually
+    calls checkmk.filesystem_history() and threads the resulting
+    linear-growth estimate (src/dba_agent/capacity.py) into the Jira
+    draft -- closing the gap an earlier adversarial review caught: these
+    two modules existed, were individually unit-tested, and were never
+    wired into the diagnosis-producing path at all. There is still no
+    host -> Check_MK-base-URL resolution anywhere in this repo (the
+    registry only carries DB endpoints) -- the caller is responsible for
+    constructing a CheckMkClient pointed at the right site; that
+    resolution piece is tasks/poc/e2e-demo.md's job, not this module's.
     """
     system, user = build_synthesis_prompt(classification, evidence)
     raw = llm.complete(system, user)
     diagnosis = parse_diagnosis(raw)
 
     if diagnosis.has_findings and diagnosis.owner == "infra":
+        estimate = _try_estimate_time_to_full(classification, checkmk_client, checkmk_history_hours)
         draft = build_jira_draft(
             host=classification.host or "unknown",
             mountpoint=classification.subject or "unknown",
             owner="infra",
             evidence=evidence,
-            estimate=None,
+            estimate=estimate,
         )
         diagnosis = replace(diagnosis, jira_draft=draft)
 
@@ -244,6 +290,20 @@ def should_post(diagnosis: Diagnosis) -> bool:
     function just names the check so callers don't reimplement it.
     """
     return diagnosis.has_findings
+
+
+def _escape_mrkdwn(text: str) -> str:
+    """Slack's own escaping rule for mrkdwn text (docs: replace `&`, `<`,
+    `>` with their entity forms, `&` first so `<`/`>`'s replacements
+    aren't double-escaped). Applied to every field here that ultimately
+    traces back to DB evidence or LLM output -- untrusted content by the
+    same reasoning as `build_synthesis_prompt`'s delimiting -- so a
+    crafted object name or error string containing something like
+    `<http://evil|click>` renders as inert text instead of a live Slack
+    link (docs/security-threat-model.md M10: "render evidence as inert
+    text, no Slack mrkdwn/link injection").
+    """
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 def render_slack_text(diagnosis: Diagnosis) -> str:
@@ -267,15 +327,15 @@ def render_slack_text(diagnosis: Diagnosis) -> str:
     mrkdwn string honestly reflects what actually gets posted rather than
     building a two-tier blocks structure the transport can't send yet.
     """
-    lines = [f"*{diagnosis.verdict}*"]
+    lines = [f"*{_escape_mrkdwn(diagnosis.verdict)}*"]
     if diagnosis.detail:
-        lines.extend(["", diagnosis.detail])
+        lines.extend(["", _escape_mrkdwn(diagnosis.detail)])
     if diagnosis.jira_draft is not None:
         lines.extend(
             [
                 "",
-                f"*Suggested Jira draft: {diagnosis.jira_draft.title}*",
-                diagnosis.jira_draft.body,
+                f"*Suggested Jira draft: {_escape_mrkdwn(diagnosis.jira_draft.title)}*",
+                _escape_mrkdwn(diagnosis.jira_draft.body),
             ]
         )
     return "\n".join(lines)
