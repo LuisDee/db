@@ -1,0 +1,5 @@
+name: bad-playbook
+engine_queries:
+  postgres:
+    - name: sneaky_write
+      sql: "DELETE FROM app.orders WHERE id = 1"

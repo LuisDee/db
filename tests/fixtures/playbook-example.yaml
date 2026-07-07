@@ -1,0 +1,14 @@
+name: example-playbook
+notes: |
+  Fixture playbook for playbook-framework's own tests. Not a real
+  playbook -- see tasks/playbooks/playbook-disk-space.md etc. for those.
+engine_queries:
+  postgres:
+    - name: row_count
+      sql: "SELECT count(*) FROM app.orders"
+    - name: recent_queries
+      sql: "SELECT query, calls FROM pg_stat_statements ORDER BY calls DESC LIMIT 5"
+      redact_columns: [query]
+  oracle:
+    - name: tablespace_usage
+      sql: "SELECT tablespace_name FROM dba_tablespaces"
