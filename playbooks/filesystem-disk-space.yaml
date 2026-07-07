@@ -1,0 +1,115 @@
+name: filesystem-disk-space
+notes: |
+  Flagship playbook (docs/dba-agent-direction.md: 24% of real alert
+  volume) -- responds to Check_MK filesystem alerts on the QuestDB
+  hosts' /local and /quest mountpoints, and to Postgres disk-growth
+  concerns more generally. Goal: identify what's growing, how fast, and
+  time-to-full; hand off to infra (Jira draft) when the fix is
+  host-level rather than DB-level.
+
+  How to read the evidence bundle this playbook produces:
+
+  Postgres
+  --------
+  * `database_size` is the headline number -- overall footprint of the
+    target database. Compare against past runs (or Check_MK's own
+    filesystem-used trend for the host, via checkmk.filesystem_history)
+    to see if growth is DB-driven at all before blaming the host.
+  * `largest_relations` names the actual offenders. In this repo's own
+    seeded demo data, `app.event_log` (an ever-growing log table) and
+    `app.orders` dominate -- exactly the "why is this database bigger
+    than expected" story compose/postgres/init/03_schema_seed.sql was
+    built to support. `index_and_toast_bytes` separates table growth
+    from index/TOAST bloat: a relation whose index_and_toast_bytes is a
+    large fraction of total_bytes points at index bloat (REINDEX
+    candidate) rather than genuine row growth.
+  * `wal_summary` gives total on-disk WAL. A WAL directory that's large
+    relative to the database itself usually means a stuck replication
+    slot, a lagging standby, or archive_command failing to keep up --
+    look there before assuming the base tables are the cause.
+
+  This playbook deliberately does not query `pg_stat_statements` or
+  anything about *query* cost -- that's the missing-index story
+  (app.orders), a different playbook's concern. This one is purely
+  "what is consuming disk and how fast."
+
+  QuestDB
+  -------
+  * `table_storage_summary` is per-table storage across the whole
+    instance (excludes system tables) -- `diskSize` is the number to
+    rank tables by; `partitionCount` and `walEnabled` explain *why* a
+    table might be growing (WAL-enabled tables accumulate a WAL
+    directory in addition to the column files until the WAL apply job
+    catches up).
+  * `metrics_partitions` drills into the one table this repo's demo
+    seeds (compose/questdb/seed.py's `metrics`) at the partition level.
+    Partitions are by day; a `metrics_partitions` result where recent
+    (highest-index / most recent minTimestamp) partitions are
+    disproportionately large relative to older ones is the accelerating-
+    growth signal the seed data was built to produce (~100k rows
+    crammed into the last 3 days on top of a ~200k/30-day baseline) --
+    exactly what should trip the linear time-to-full estimate
+    (src/dba_agent/capacity.py) into flagging urgency. If a real
+    engine's QuestDB deployment has more than one table, generalize
+    `metrics_partitions`'s literal table name into a parameter before
+    reusing this query.
+
+  Column names for both QuestDB functions were confirmed against
+  QuestDB's own source (griffin engine `TableStorageRecordCursorFactory`
+  / `ShowPartitionsRecordCursorFactory`, questdb/questdb@master) rather
+  than the public docs site, which this sandbox's egress policy blocks
+  fetching (see tests/integration/test_questdb_seed.py's note on the
+  same restriction). Genuinely unverified: whether a *running* QuestDB
+  instance's version matches master's column set exactly -- confirm
+  against a live instance before trusting this byte-for-byte in
+  production (tracks docs/dba-agent-spec.md open question 2's sibling
+  problem for QuestDB rather than Check_MK).
+
+  Time-to-full and the Jira handoff
+  ----------------------------------
+  Neither engine's queries alone answer "when does this fill up" -- that
+  needs a time series, which lives in Check_MK's already-collected
+  filesystem history (checkmk.filesystem_history), not in these
+  point-in-time SQL queries. Feed that history plus a capacity into
+  src/dba_agent/capacity.py's estimate_time_to_full() for the growth
+  rate and ETA, then src/dba_agent/jira_draft.py's build_jira_draft() to
+  turn the evidence bundle + estimate into a ready-to-paste ticket draft
+  (docs/dba-agent-direction.md decision 4: draft in-thread, not a live
+  Jira call, in v1).
+engine_queries:
+  postgres:
+    - name: database_size
+      sql: |
+        SELECT pg_database_size(current_database()) AS size_bytes,
+               pg_size_pretty(pg_database_size(current_database())) AS size_pretty
+    - name: largest_relations
+      sql: |
+        SELECT n.nspname AS schema_name,
+               c.relname AS relation_name,
+               pg_total_relation_size(c.oid) AS total_bytes,
+               pg_size_pretty(pg_total_relation_size(c.oid)) AS total_pretty,
+               pg_relation_size(c.oid) AS table_bytes,
+               pg_total_relation_size(c.oid) - pg_relation_size(c.oid) AS index_and_toast_bytes
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE c.relkind IN ('r', 'm')
+          AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+        ORDER BY total_bytes DESC
+        LIMIT 15
+    - name: wal_summary
+      sql: |
+        SELECT count(*) AS wal_file_count,
+               sum(size) AS wal_total_bytes,
+               pg_size_pretty(sum(size)) AS wal_total_pretty
+        FROM pg_ls_waldir()
+  questdb:
+    - name: table_storage_summary
+      sql: |
+        SELECT tableName, walEnabled, partitionBy, partitionCount, rowCount, diskSize
+        FROM table_storage()
+        ORDER BY diskSize DESC
+    - name: metrics_partitions
+      sql: |
+        SELECT index, name, numRows, diskSize, diskSizeHuman, minTimestamp, maxTimestamp, active
+        FROM table_partitions('metrics')
+        ORDER BY index DESC
