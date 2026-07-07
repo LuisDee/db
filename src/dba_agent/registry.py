@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -19,6 +20,10 @@ class UnknownEndpointError(Exception):
     rather than crashing."""
 
 
+class CredentialRefError(Exception):
+    """An endpoint's credential_ref names an env var that isn't set."""
+
+
 @dataclass(frozen=True)
 class Endpoint:
     key: str
@@ -27,6 +32,19 @@ class Endpoint:
     credential_ref: str
     tier: str
     aliases: tuple[str, ...] = field(default_factory=tuple)
+
+    def resolve_credential(self, env: dict | None = None) -> str:
+        """Look up the actual secret value at call time. The YAML only
+        ever stores credential_ref (an env var name) — never a secret —
+        so this is the one place a real value comes into existence."""
+        env = env if env is not None else os.environ
+        value = env.get(self.credential_ref)
+        if not value:
+            raise CredentialRefError(
+                f"credential ref {self.credential_ref!r} for endpoint "
+                f"{self.key!r} is not set in the environment"
+            )
+        return value
 
 
 @dataclass(frozen=True)

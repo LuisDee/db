@@ -2,7 +2,13 @@ from pathlib import Path
 
 import pytest
 
-from dba_agent.registry import Endpoint, RegistryError, UnknownEndpointError, load_registry
+from dba_agent.registry import (
+    CredentialRefError,
+    Endpoint,
+    RegistryError,
+    UnknownEndpointError,
+    load_registry,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -110,3 +116,29 @@ def test_resolve_unknown_name_raises_unknown_endpoint_error():
 
     with pytest.raises(UnknownEndpointError, match="nope-does-not-exist"):
         registry.resolve("nope-does-not-exist")
+
+
+def test_resolve_credential_reads_from_env_mapping():
+    registry = load_registry(FIXTURES / "registry.yaml")
+    endpoint = registry.resolve("boproddb-prod")
+
+    value = endpoint.resolve_credential(env={"ORACLE_RO_BOPRODDB": "hunter2"})
+
+    assert value == "hunter2"
+
+
+def test_resolve_credential_missing_env_var_raises():
+    registry = load_registry(FIXTURES / "registry.yaml")
+    endpoint = registry.resolve("boproddb-prod")
+
+    with pytest.raises(CredentialRefError, match="ORACLE_RO_BOPRODDB"):
+        endpoint.resolve_credential(env={})
+
+
+def test_endpoint_repr_never_contains_resolved_secret():
+    registry = load_registry(FIXTURES / "registry.yaml")
+    endpoint = registry.resolve("boproddb-prod")
+
+    endpoint.resolve_credential(env={"ORACLE_RO_BOPRODDB": "super-secret-value"})
+
+    assert "super-secret-value" not in repr(endpoint)
