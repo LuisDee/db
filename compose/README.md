@@ -126,31 +126,32 @@ evidence). Concretely, what was and wasn't run:
   calls against a real QuestDB, and end-to-end `make up` / `make seed`
   / `make inject-alert` runs.
 
+**Resolved during merge review:** the `questdb` service originally had
+a bash-`/dev/tcp`-based healthcheck resting on an unconfirmed assumption
+that the `fedora-minimal`-based runtime image ships `bash`. Since
+`docker compose up --wait` fails the *entire* `make up` if any
+healthcheck never passes, and nothing in this compose file
+`depends_on` questdb's health condition, the safer and equally correct
+choice was to drop the container-level healthcheck entirely rather
+than ship an unverifiable assumption. `docker compose ps` will show
+`questdb` as "running", not "healthy" -- expected. Real readiness is
+still proven, just host-side: `questdb/seed.py` polls the REST endpoint
+itself before seeding and does not depend on the Docker-level check.
+
 **What to check first on a real Docker host, in priority order:**
 
-1. **The `questdb` healthcheck.** `questdb/questdb`'s runtime image is
-   `fedora-minimal`/`ubi-minimal`-based and does not ship `curl` or
-   `wget` (checked against the upstream Dockerfile) -- the healthcheck
-   here uses bash's `/dev/tcp/127.0.0.1/9003` to test the min health
-   server's port is open, on the assumption the base image has `bash`.
-   If it doesn't, `docker compose up --wait` will report `questdb`
-   unhealthy indefinitely even though the DB is fine. Fix if that
-   happens: relax/replace the healthcheck block (or set `disable: true`
-   on it) -- `make seed` does its own independent host-side HTTP
-   readiness poll in `questdb/seed.py` and does not depend on this
-   Docker-level check being correct.
-2. **The Oracle tablespace fill loop's actual fill percentage.** The
+1. **The Oracle tablespace fill loop's actual fill percentage.** The
    PL/SQL in `oracle/init/02_fill_tablespace.sql` targets ~90% used
    computed from `dba_data_files`/`dba_free_space`, but block-size and
    segment-header overhead weren't measured against a real instance --
    confirm it lands in a believable "near full" range (not 100%/failed,
    not 50%/not-near-full) and adjust `v_batch`/the 0.90 target if not.
-3. **Streaming replication actually catching up.** `postgres-replica`'s
+2. **Streaming replication actually catching up.** `postgres-replica`'s
    `pg_basebackup -R` approach is the standard pattern for this, but
    wasn't run against a live primary -- confirm `pg_stat_wal_receiver`
    on the replica shows `streaming` and `pg_stat_replication` on the
    primary shows the replica, once both containers are healthy.
-4. Everything else (Postgres/Oracle seed SQL, the agent Dockerfile
+3. Everything else (Postgres/Oracle seed SQL, the agent Dockerfile
    build) already had a lower-risk dry run in
    `tasks/foundation/agent-skeleton.md`'s own verification (isolated
    venv + subprocess, not the container) or is plain, unremarkable

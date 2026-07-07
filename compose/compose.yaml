@@ -122,21 +122,20 @@ services:
       - "9009:9009"  # ILP ingestion (unused here, exposed for completeness)
       - "9003:9003"  # min health server
     mem_limit: 1g
-    healthcheck:
-      # questdb/questdb's runtime image is fedora-minimal/ubi-minimal
-      # based and does NOT ship curl or wget (verified against the
-      # upstream Dockerfile) -- this checks that the min health server's
-      # port is open via bash's /dev/tcp rather than depending on a tool
-      # that may not be there. See compose/README.md's "check this
-      # first" note: this line is parse-only-verified, not live-tested,
-      # in this environment. `make seed` does its own independent
-      # host-side readiness poll and does not depend on this healthcheck
-      # being correct.
-      test: ["CMD-SHELL", "bash -c '(echo > /dev/tcp/127.0.0.1/9003) 2>/dev/null'"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-      start_period: 20s
+    # No container-level healthcheck: questdb/questdb's runtime image is
+    # quay.io/fedora/fedora-minimal based, and it's unverifiable from
+    # this environment whether bash/curl/wget are present in that image
+    # (checked against the upstream Dockerfile -- the builder stage
+    # installs them, the final "questdb" stage does not, and
+    # fedora-minimal's shell provisioning isn't confirmable without a
+    # live pull). A healthcheck test that silently can't execute would
+    # retry for interval*retries then mark the service unhealthy and
+    # fail `docker compose up --wait` for the WHOLE stack -- worse than
+    # having none, since nothing here depends_on questdb's health
+    # condition anyway. Real readiness is proven by compose/questdb/
+    # seed.py's own host-side REST poll before it seeds, which is the
+    # actually-meaningful gate. `docker compose ps` will show this
+    # service as "running", not "healthy" -- that's expected.
     restart: unless-stopped
 
 volumes:
