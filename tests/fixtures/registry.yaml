@@ -1,0 +1,16 @@
+boproddb-prod:
+  engine: oracle
+  dsn: "boproddb-prod.internal:1521/BOPROD"
+  credential_ref: ORACLE_RO_BOPRODDB
+  tier: prod
+  aliases:
+    - boproddb
+    - uk01vdb301
+
+dev-pg:
+  engine: postgres
+  dsn: "postgresql://dev-pg.internal:5432/appdb"
+  credential_ref: PG_RO_DEV
+  tier: dev
+  aliases:
+    - dev
