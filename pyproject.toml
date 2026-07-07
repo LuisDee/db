@@ -20,8 +20,11 @@ dev = ["pytest>=8.0", "ruff>=0.6", "testcontainers>=4.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["integration: needs a real (or testcontainers-provided) database engine"]
-addopts = "-m 'not integration'"
+markers = [
+    "integration: needs a real (or testcontainers-provided) database engine",
+    "llm_live: needs a real, billed LLM API call (ANTHROPIC_API_KEY) -- distinct from 'integration' because the gating condition is a paid external API, not a local/testcontainers database; skips cleanly without a usable key, same as 'integration' skips cleanly without Docker",
+]
+addopts = "-m 'not integration and not llm_live'"
 
 [tool.ruff]
 line-length = 100
