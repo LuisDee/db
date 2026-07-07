@@ -4,6 +4,7 @@ depends_on:
   - /tasks/triage/dedup-cooldown.md
   - /tasks/foundation/compose-stack.md
   - /tasks/playbooks/playbook-disk-space.md
+  - /tasks/poc/v0-poc-ready.md
 ---
 
 # POC end-to-end demo

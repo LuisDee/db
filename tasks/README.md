@@ -25,9 +25,11 @@ foundation/agent-skeleton [x]
       ├── triage/diagnosis-synthesis [x] (also needs playbook-framework [x]) ───────────────────┘
       └── digest/noise-digest
 
-poc/e2e-demo ← diagnosis-synthesis [x] + dedup-cooldown [x] + compose-stack [x]
-              + playbook-disk-space [x]
-     └── apply/runbook-apply-path (v2 write path, blocked on the demo)
+poc/v0-poc-ready ← compose-stack [x] + endpoint-registry [x]
+              + playbook-framework [x]
+     └── poc/e2e-demo ← diagnosis-synthesis [x] + dedup-cooldown [x]
+              + compose-stack [x] + playbook-disk-space [x] + v0-poc-ready
+              └── apply/runbook-apply-path (v2 write path, blocked on the demo)
 ```
 
 Note: `listener/slack-listener` is NOT a dependency of anything on the
@@ -37,13 +39,16 @@ driving the classifier/executor/synthesis chain directly, without a
 live Socket Mode listener. Build `slack-listener` separately if/when a
 genuinely live-Slack-driven demo (rather than script-driven) is wanted.
 
-**Every direct dependency of `poc/e2e-demo` is now done.** That's the
-only task left to reach the POC's exit criterion — it's pure
-integration/wiring work (`make demo`, the cooldown-suppresses-a-repeat
-proof, the Oracle tablespace second demo, the stakeholder write-up),
-not new component-building.
+**The component tasks are done, but `poc/e2e-demo` is NOT "pure wiring
+against finished parts."** A hands-on stress test of the live compose
+stack (2026-07-08) found the parts have never run together against live
+engines and the demo's own preconditions are unmet — the read path can't
+connect (`dba_agent_ro` is provisioned nowhere) and `make up` exits
+non-zero (postgres-replica never starts). Those newly-surfaced blockers
+are tracked in `poc/v0-poc-ready.md`, now a dependency of `poc/e2e-demo`.
 
 Everything except `apply/` is POC scope: prove the loop locally in
-containers before anything touches a real host. Further post-POC work
-(live Jira, coverage advisor, capacity forecasting) gets registered as
-new tasks when the POC demo passes.
+containers before anything touches a real host. Everything that is NOT
+required for that demo — v1 real-infra wiring, the deferred hardening the
+2026-07-08 review surfaced, v1.5 Jira, and the v2 write path — is
+collected in `backlog/post-poc.md`.
