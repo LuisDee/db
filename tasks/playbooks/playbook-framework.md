@@ -1,6 +1,7 @@
 ---
 depends_on:
   - /tasks/foundation/endpoint-registry.md
+  - /tasks/foundation/integration-test-infra.md
 ---
 
 # Playbook framework

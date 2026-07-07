@@ -10,16 +10,16 @@ only status, commit hashes as merge evidence. See
 
 ```
 foundation/agent-skeleton
- ├── foundation/endpoint-registry
- │    └── playbooks/playbook-framework
- │         ├── playbooks/playbook-disk-space      ─┐
- │         ├── playbooks/playbook-replication-lag ─┤
- │         └── playbooks/playbook-tablespace-usage┤
- ├── foundation/compose-stack ──────(also feeds)──┘
- ├── listener/slack-listener
- │    └── triage/dedup-cooldown
- └── listener/alert-classifier
-      ├── triage/diagnosis-synthesis (also needs playbook-framework)
+ ├── foundation/endpoint-registry ──┐
+ ├── foundation/compose-stack ──────┼── foundation/integration-test-infra
+ │                                  │        └── playbooks/playbook-framework
+ │                                  │             ├── playbooks/playbook-disk-space      ─┐
+ │                                  │             ├── playbooks/playbook-replication-lag ─┤
+ │                                  │             └── playbooks/playbook-tablespace-usage┤
+ ├── listener/slack-listener ───────┘                                                    │
+ │    └── triage/dedup-cooldown                                                          │
+ └── listener/alert-classifier                                                           │
+      ├── triage/diagnosis-synthesis (also needs playbook-framework) ────────────────────┘
       └── digest/noise-digest
 
 poc/e2e-demo ← diagnosis-synthesis + dedup-cooldown + compose-stack
