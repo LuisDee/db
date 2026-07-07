@@ -14,7 +14,7 @@ says "unknown host" rather than guessing.
 
 ## Deliverables
 
-- [ ] Registry schema + loader with validation and helpful errors
-- [ ] Lookup by exact host, DB name, and alias list
-- [ ] Credential refs resolve via env only (no secrets in the YAML)
-- [ ] Unit tests incl. unknown-host and ambiguous-alias cases
+- [x] Registry schema + loader with validation and helpful errors (commit: b1bc365)
+- [x] Lookup by exact host, DB name, and alias list (commit: 42f091c)
+- [x] Credential refs resolve via env only (no secrets in the YAML) (commit: ed74049)
+- [x] Unit tests incl. unknown-host and ambiguous-alias cases (commit: caca6e8)
