@@ -108,6 +108,42 @@ more goodwill than the triage bot itself.
 * Scoped SSH for host-level forensics, if a playbook proves the need.
 * Incident-thread summarization (what happened, timeline, follow-ups).
 
+## Decisions — round 2 (2026-07-07, later)
+
+7. **Triage bot confirmed as a must; scheduled DB sweep promoted.** The
+   cadence-driven "scan the DBs, find issues, check datafile/tablespace
+   headroom, suggest new alerts" agent is committed post-POC scope (it
+   reuses the POC's playbook executor — a sweep is playbooks run on a
+   timer instead of on an alert).
+8. **No SSH, confirmed.** Debugging is queries + Check_MK API. The
+   residual host-level gap (e.g. "which non-DB process is eating
+   /local") is handled by handing infra a Jira draft with everything we
+   *can* see, which is the correct org boundary anyway.
+9. **Write gate without sqitch.** The GitLab gate survives; only the
+   applier changes. Bot opens MR (runbook-action YAML + rendered SQL) →
+   only the DBA group has merge permission on the repo (works on GitLab
+   Free; enforced approval rules/CODEOWNERS need Premium) → merge
+   triggers a manual "apply" CI job → a tiny applier (psql / sqlplus /
+   python-oracledb in the runner image) executes under the
+   write-capable identity, records to an audit table, posts the result
+   to the originating Slack thread. There is no privileged "write API"
+   for PG/Oracle to use instead — writes are SQL over a connection
+   either way; the gate is about *who holds the write credentials and
+   when they can be used* (never the bot; only the post-approval job).
+10. **Oracle is Standard Edition** — constraint recorded: playbooks
+   must be license-clean (no AWR/ASH/`dba_hist_*`; Diagnostics Pack is
+   EE-only), and Data Guard is EE-only so the boproddb standby is
+   presumably scripted/Dbvisit — mechanism to confirm (blocks the
+   replication playbook's Oracle query set).
+11. **Containers-first proof.** Nothing touches a real host, channel,
+   or credential until the full loop passes in the local compose stack
+   (postgres:16 + gvenzl/oracle-free + questdb + alert injector). See
+   `tasks/poc/e2e-demo.md` for the exit criterion.
+12. **Structured Tasks adopted.** Work items and decision history live
+   in `tasks/` with the compliance/branch-guard scripts under
+   `project-management/scripts/`. Kept deliberately light: the scripts
+   and task DAG exist, the mgmt-ui visualizer does not (POC first).
+
 ## Open items
 
 * Agent language: Python assumed (matches existing tooling and
