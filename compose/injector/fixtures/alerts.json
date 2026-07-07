@@ -1,0 +1,52 @@
+[
+  {
+    "id": "qdb-flap-1",
+    "type": "questdb-health-flap",
+    "text": "Check_MK: uk01vdb301/QuestDB Health is CRITICAL\nHost:     uk01vdb301\nAlias:    uk01vdb301 (questdb01)\nAddress:  10.20.31.41\nService:  QuestDB Health\nState:    CRITICAL\nOutput:   CRIT - connect to 127.0.0.1:9003 failed: Connection refused (!!), last OK 3m ago"
+  },
+  {
+    "id": "qdb-flap-2",
+    "type": "questdb-health-flap",
+    "text": "Check_MK: uk01vdb301/QuestDB Health is OK\nHost:     uk01vdb301\nAlias:    uk01vdb301 (questdb01)\nAddress:  10.20.31.41\nService:  QuestDB Health\nState:    OK\nOutput:   OK - HTTP 200, min health server responded in 4ms (flapping: 6 state changes / 30 min)"
+  },
+  {
+    "id": "qa-refresh-1",
+    "type": "qa-refresh",
+    "text": "Check_MK: qarefresh01/Nightly QA Refresh is OK\nHost:     qarefresh01\nService:  Nightly QA Refresh\nState:    OK\nOutput:   Job 'qa_nightly_refresh' Started at 02:00:03"
+  },
+  {
+    "id": "qa-refresh-2",
+    "type": "qa-refresh",
+    "text": "Check_MK: qarefresh01/Nightly QA Refresh is WARNING\nHost:     qarefresh01\nService:  Nightly QA Refresh\nState:    WARNING\nOutput:   Job 'qa_nightly_refresh' Finished at 02:47:19 -- WARN: FK constraint FK_ORDER_CUSTOMER restored after refresh (row count mismatch pre/post: 12 orphaned rows dropped). Recurring most nights -- suspected refresh-tooling ordering issue, not application data corruption."
+  },
+  {
+    "id": "disk-space-1",
+    "type": "disk-space",
+    "text": "Check_MK: uk01vdb301/Filesystem /local is CRITICAL\nHost:     uk01vdb301\nAlias:    uk01vdb301 (questdb01)\nAddress:  10.20.31.41\nService:  Filesystem /local\nState:    CRITICAL\nOutput:   CRIT - 93.7% used (46.9 of 50.0 GB), trend: +1.4 GB / 24h, time left: 2.9 days (warn/crit at 80.0%/90.0%)"
+  },
+  {
+    "id": "disk-space-2",
+    "type": "disk-space",
+    "text": "Check_MK: uk01vdb301/Filesystem /quest is WARNING\nHost:     uk01vdb301\nAlias:    uk01vdb301 (questdb01)\nAddress:  10.20.31.41\nService:  Filesystem /quest\nState:    WARNING\nOutput:   WARN - 82.1% used (164.2 of 200.0 GB), trend: +3.1 GB / 24h (warn/crit at 80.0%/90.0%)"
+  },
+  {
+    "id": "disk-space-3",
+    "type": "disk-space",
+    "text": "Check_MK: pgdb02/Filesystem /var/lib/postgresql is WARNING\nHost:     pgdb02\nAlias:    pgdb02 (postgres primary)\nAddress:  10.20.32.12\nService:  Filesystem /var/lib/postgresql\nState:    WARNING\nOutput:   WARN - 81.4% used (325.6 of 400.0 GB), trend: +2.2 GB / 24h -- growth tracks app.event_log inserts (warn/crit at 80.0%/90.0%)"
+  },
+  {
+    "id": "replication-lag-1",
+    "type": "replication-lag",
+    "text": "Check_MK: boproddb-standby/Standby Replication Lag is CRITICAL\nHost:     boproddb-standby\nAlias:    boproddb-standby\nAddress:  10.20.40.5\nService:  Standby Replication Lag\nState:    CRITICAL\nOutput:   CRIT - standby is 47 archived logs behind primary (last applied seq 88213, primary at seq 88260), apply rate has not kept pace with generation rate since ~01:15 (warn/crit at 10/25 logs)"
+  },
+  {
+    "id": "tablespace-usage-1",
+    "type": "tablespace-usage",
+    "text": "Check_MK: boproddb/Tablespace USER_INDEX_04 is WARNING\nHost:     boproddb\nAlias:    boproddb\nAddress:  10.20.40.2\nService:  Tablespace USER_INDEX_04\nState:    WARNING\nOutput:   WARN - USER_INDEX_04 91.2% used (18.2 of 20.0 MB), autoextend OFF, no headroom (warn/crit at 85.0%/95.0%)"
+  },
+  {
+    "id": "human-1",
+    "type": "human",
+    "text": "hey can we do something about the QuestDB flapping alerts, that's like a third of the channel at this point and nobody looks at them anymore -- if it's a real problem it's getting lost in the noise"
+  }
+]

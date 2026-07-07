@@ -1,0 +1,75 @@
+# Preview endpoint descriptions for the compose-stack services.
+#
+# NOT consumed by any code -- tasks/foundation/endpoint-registry.md
+# (schema + loader) is a separate, parallel task and this file
+# deliberately does not depend on or import anything from it. This is
+# just a self-contained, human/agent-readable note of what's reachable
+# in the compose network, so whoever builds the real registry loader has
+# a worked example of what the compose stack actually exposes, and so
+# playbook development against this stack has one place to look up DSNs.
+#
+# Field names are a superset guess at what endpoint-registry.md's schema
+# will likely need (engine, dsn, environment, credential ref, aliases) --
+# expect the real schema to differ; this file is documentation, not a
+# contract.
+
+endpoints:
+  postgres-primary:
+    engine: postgres
+    environment: compose-dev
+    host: postgres        # service name inside the compose network
+    port: 5432
+    host_port: 5432        # published to the docker host
+    database: postgres
+    aliases: [pgdb01, pgdb-primary]
+    read_only_credential_ref: env:POSTGRES_USER/POSTGRES_PASSWORD  # dev-only, see compose/.env.example
+    notes: >
+      pg_stat_statements preloaded + enabled; app.orders (no index on
+      customer_id/status -- deliberate slow-query story) and
+      app.event_log (disk-growth story) seeded by
+      compose/postgres/init/*.sql.
+
+  postgres-replica:
+    engine: postgres
+    environment: compose-dev
+    host: postgres-replica
+    port: 5432
+    host_port: 5433
+    database: postgres
+    aliases: [pgdb02, pgdb-standby]
+    read_only_credential_ref: env:POSTGRES_USER/POSTGRES_PASSWORD  # same role, read-only by virtue of being a standby
+    notes: >
+      Streaming standby of postgres-primary (compose/postgres-replica/).
+      Supports tasks/playbooks/playbook-replication-lag.md's Postgres
+      query set (pg_stat_replication on the primary, pg_stat_wal_receiver
+      here).
+
+  oracle-free:
+    engine: oracle
+    environment: compose-dev
+    host: oracle
+    port: 1521
+    host_port: 1521
+    service_name: FREEPDB1
+    aliases: [boproddb]  # named to match the spec's motivating example; see docs/dba-agent-spec.md
+    read_only_credential_ref: env:ORACLE_PASSWORD  # dev-only, see compose/.env.example (SYS -- no read-only role provisioned yet, that's provisioning/'s job)
+    notes: >
+      USER_INDEX_04 tablespace seeded near-full (~90%, 20M datafile, no
+      autoextend) by compose/oracle/init/*.sql -- supports
+      tasks/playbooks/playbook-tablespace-usage.md. Standard Edition:
+      no AWR/ASH/dba_hist_* in any seed data or intended query set.
+
+  questdb:
+    engine: questdb
+    environment: compose-dev
+    host: questdb
+    rest_port: 9000
+    pgwire_port: 8812
+    health_port: 9003
+    aliases: [questdb01]
+    read_only_credential_ref: null  # QuestDB dev image has no auth configured; PGWire default is admin/quest
+    notes: >
+      metrics table (WAL, PARTITION BY DAY) seeded by
+      compose/questdb/seed.py via the REST /exec endpoint after boot --
+      supports tasks/playbooks/playbook-disk-space.md's
+      table_storage()/table_partitions() evidence queries.
