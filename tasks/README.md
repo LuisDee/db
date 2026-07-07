@@ -21,11 +21,11 @@ foundation/agent-skeleton [x]
  │                                      │             └── playbooks/playbook-tablespace-usage     ┤
  ├── listener/slack-listener                                                                      │
  └── listener/alert-classifier [x]                                                                │
-      ├── triage/dedup-cooldown                                                                   │
-      ├── triage/diagnosis-synthesis (also needs playbook-framework [x]) ────────────────────────┘
+      ├── triage/dedup-cooldown [x]                                                               │
+      ├── triage/diagnosis-synthesis [x] (also needs playbook-framework [x]) ───────────────────┘
       └── digest/noise-digest
 
-poc/e2e-demo ← diagnosis-synthesis + dedup-cooldown + compose-stack [x]
+poc/e2e-demo ← diagnosis-synthesis [x] + dedup-cooldown [x] + compose-stack [x]
               + playbook-disk-space [x]
      └── apply/runbook-apply-path (v2 write path, blocked on the demo)
 ```
@@ -37,10 +37,11 @@ driving the classifier/executor/synthesis chain directly, without a
 live Socket Mode listener. Build `slack-listener` separately if/when a
 genuinely live-Slack-driven demo (rather than script-driven) is wanted.
 
-Remaining on the critical path to `poc/e2e-demo`: `triage/dedup-cooldown`
-and `triage/diagnosis-synthesis` (both unblocked now that
-`alert-classifier` and `playbook-framework` are done), then `e2e-demo`
-itself.
+**Every direct dependency of `poc/e2e-demo` is now done.** That's the
+only task left to reach the POC's exit criterion — it's pure
+integration/wiring work (`make demo`, the cooldown-suppresses-a-repeat
+proof, the Oracle tablespace second demo, the stakeholder write-up),
+not new component-building.
 
 Everything except `apply/` is POC scope: prove the loop locally in
 containers before anything touches a real host. Further post-POC work
