@@ -45,7 +45,15 @@ noise discipline is a feature.
       — rather than inventing a Block Kit structure the transport can't send.
       `slack.py` was **not modified** — no extension needed. Unit-tested:
       verdict-first ordering, detail omitted when blank, Jira draft section
-      included when attached.
+      included when attached. **Follow-up from the 2026-07-07
+      retrospective adversarial review**: the original version embedded
+      verdict/detail/Jira-draft text with no escaping — a threat-model
+      M10 gap (crafted DB evidence or LLM output containing
+      `<http://evil|click>`-shaped text would have rendered as a live
+      Slack link). Fixed: `_escape_mrkdwn()` now escapes `&`/`<`/`>` per
+      Slack's own entity-escaping rule, applied to every field that
+      traces back to untrusted content, with a test proving injection-
+      shaped text renders inert.
 - [x] "Nothing to add" suppression path (commit: fee414a — `has_findings` on
       `Diagnosis` is the signal (coerced `False` on any malformed/empty/non-
       bool response, and correctly `False`/`True` from a well-formed
@@ -71,3 +79,21 @@ noise discipline is a feature.
       Postgres playbook round-trips through `record()`/`get()`
       (`tests/integration/test_synthesis_disk_space_wiring.py`, commit:
       60c3578).
+
+## Retrospective addendum (2026-07-07 adversarial review)
+
+An adversarial cross-task review (run after this task and
+`tasks/playbooks/playbook-disk-space.md` were both already marked
+complete) found that `checkmk.py`/`capacity.py` — built for the
+disk-space playbook — were never actually called from
+`synthesize()`, despite both tasks' checkboxes implying an end-to-end
+time-to-full estimate. Fixed here: `synthesize()` gained an optional
+`checkmk_client: CheckMkClient | None = None` + `checkmk_history_hours`
+parameter (default `None` preserves the exact original behaviour for
+every pre-existing caller/test); when a caller supplies one along with
+a classification that has a host + subject, `_try_estimate_time_to_full`
+genuinely calls `filesystem_history()` → `estimate_time_to_full()` and
+threads the result into the Jira draft, degrading safely to the
+original "not available" section on any failure. New tests prove the
+threading, the unmodified-default behaviour, and the failure-tolerance
+path. See `tasks/playbooks/playbook-disk-space.md`'s matching addendum.

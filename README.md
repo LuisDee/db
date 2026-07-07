@@ -26,14 +26,37 @@ History: original spec v0.1 + adversarial review, also in `docs/`.
 
 ## Layout
 
-- `docs/` — spec, review, decision log.
+Exists now:
+
+- `docs/` — spec, review, decision log, security threat model.
 - `tasks/` — Structured Tasks work items (`depends_on` DAG, checklists
   as status, commit hashes as evidence). Start at `tasks/README.md`.
 - `project-management/scripts/` — Structured Tasks tooling: context
   loader, task compliance gater, git branch guard.
-- `src/`, `actions/`, `provisioning/`, `compose/` — arrive with the POC
-  tasks (agent app, runbook-action catalogue, DB account provisioning
-  SQL, local stack).
+- `src/dba_agent/` — the agent app: config/logging/LLM/Slack (skeleton),
+  `registry.py` (endpoint resolution), `playbooks.py`/`executor.py`
+  (playbook loader + read-only query runner), `classifier.py` (alert →
+  structured classification), `cooldown.py`/`diagnosis_store.py` (SQLite
+  bookkeeping — dedup/cooldown state and the diagnosis audit trail,
+  each its own gitignored `var/*.sqlite3` file), `synthesis.py` (evidence
+  → threaded reply), `checkmk.py`/`capacity.py`/`jira_draft.py`
+  (playbook-disk-space's supporting pieces), `redact.py`.
+- `playbooks/` — real playbook YAML content (queries + interpretation
+  notes per engine), loaded by `src/dba_agent/playbooks.py`.
+- `tests/`, `tests/integration/` — unit tests (fakes at every boundary)
+  and real-engine integration tests (`pytest -m integration`; see
+  `tests/integration/README.md` for what's live-verified vs.
+  structurally-ready-but-unproven in a given environment) and
+  `pytest -m llm_live` (needs a real, billed Anthropic API key).
+- `compose/` — the local proof environment (Docker Compose: Postgres +
+  Oracle + QuestDB + the agent skeleton + an alert injector). See
+  `compose/README.md`.
+
+Still v2/future (write path, not built yet):
+
+- `actions/`, `provisioning/` — runbook-action catalogue and DB account
+  provisioning SQL; arrive with `tasks/apply/runbook-apply-path.md`,
+  gated behind `tasks/poc/e2e-demo.md` passing first.
 
 ## Session ceremony (agents and humans)
 

@@ -106,12 +106,20 @@ Three delivery surfaces share the same machinery:
   captured SQL text are redacted before leaving the agent (PII).
 - **Synthesis** — LLM turns the evidence bundle into the threaded
   reply: two-line verdict, evidence, suggested action, Jira draft when
-  the fix is infra-owned. Confidence comes from corroborating evidence,
-  never from asking the model. Every diagnosis is persisted with its
+  the fix is infra-owned (`owner` is a closed three-value enum —
+  `infra`/`db`/`None` — only `infra` + a real finding produces a Jira
+  draft; `db`-owned findings get the verdict/detail only). Confidence
+  comes from corroborating evidence, never from asking the model. Every
+  diagnosis is persisted (implementation: stdlib SQLite,
+  `src/dba_agent/diagnosis_store.py`, a gitignored `var/` file) with its
   eventual reactions.
 - **Dedup/cooldown** — per-fingerprint cooldown window; repeats update
   a counter on the existing thread at most. Per-day LLM budget. An
-  alert storm is neither an MR storm nor a token storm.
+  alert storm is neither an MR storm nor a token storm. (Implementation:
+  stdlib SQLite, `src/dba_agent/cooldown.py`, its own separate `var/`
+  file from Synthesis's — the agent's own bookkeeping, distinct from any
+  target database it monitors, chosen because both the in-flight marker
+  and the daily budget counter must survive a process restart.)
 
 ## 5. Write path — runbook actions via GitLab
 
@@ -293,6 +301,18 @@ QuestDB: read via its SQL interface (`table_storage()` etc.) with a
 read-only user where the deployment supports it; QuestDB writes are out
 of scope for the action catalogue v1.
 
+**Live-verification status of `dba_agent_ro` (Postgres), as of the POC
+build**: only partially proven. The role created and used for the real
+integration tests in `tests/integration/` (see
+`tasks/playbooks/playbook-framework.md`'s commit evidence) has just
+`SELECT` (on the seeded `app.*` tables) + `pg_monitor` — narrower than
+this table's target grant set (`pg_monitor` + `pg_read_all_stats` +
+`pg_read_all_settings`). No `provisioning/` SQL exists yet to create the
+full grant set on a real target; don't assume the whole row above is
+proven merely because the code consistently references a `dba_agent_ro`
+username. Same caveat applies to Oracle's `SELECT_CATALOG_ROLE` grant —
+referenced everywhere in code, provisioned nowhere yet.
+
 Plus application-level service accounts: Slack bot token (Socket Mode
 app), Anthropic API key, Check_MK API user (read-only), GitLab project
 access token (open MRs only — not merge), Jira service account (v1.5).
@@ -347,7 +367,19 @@ of channel noise).
    shipping? Dbvisit?) — blocks the Oracle replication playbook query
    set.
 2. Check_MK API availability/version (Livestatus vs REST) and a
-   read-only API user.
+   read-only API user. **Update from the POC build**: no longer fully
+   open — `src/dba_agent/checkmk.py` has already committed to a
+   specific, coded (but never live-verified) shape: REST API 1.0,
+   `Authorization: Bearer <user> <secret>`,
+   `/objects/host/{host}/collections/services` for current filesystem
+   state, and a best-effort reconstruction of a `/domain-types/metric/
+   actions/get/invoke` endpoint for history (this sandbox's egress
+   policy blocked reaching `docs.checkmk.com` to confirm it directly —
+   the shape is inferred from search-engine summaries plus the older
+   `get_graph` Web API's `start_time`/`step`/`rrddata` time-series
+   encoding). Treat the *history* endpoint especially as unverified.
+   What's still genuinely open: does this shape match reality at all,
+   and what read-only API user/token this repo should actually use.
 3. Egress to `api.anthropic.com` from Foundry — verify with the week-0
    spike.
 4. Secrets: does Foundry provide a vault, or GitLab CI variables until

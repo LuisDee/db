@@ -45,6 +45,22 @@ ready-to-paste Jira ticket draft (infra-owned) with the evidence table.
       `linear_growth_rate()` are pure and fully unit-tested (increasing,
       flat, decreasing, insufficient-data, already-past-capacity cases
       all covered) independent of any live engine.
+      **Correction from the 2026-07-07 retrospective adversarial
+      review**: as first built, these two modules were individually
+      unit-tested but never actually called from `synthesis.synthesize()`
+      — the flagship playbook never produced a real time-to-full
+      estimate despite this checkbox being ticked. Fixed properly
+      (commit on `claude/dba-alerts-bot-spec-x52n0c`, see
+      `src/dba_agent/synthesis.py`'s `_try_estimate_time_to_full`):
+      `synthesize()` now takes an optional `checkmk_client` +
+      `checkmk_history_hours`, and when provided (with a classification
+      host+subject), genuinely threads Check_MK history through the
+      estimator into the Jira draft — proven with new tests, including
+      a Check_MK-failure-doesn't-break-synthesis case. Still open:
+      there is no host → Check_MK-base-URL resolution anywhere in this
+      repo (the registry only carries DB endpoints) — constructing and
+      passing the right `CheckMkClient` per host is
+      `tasks/poc/e2e-demo.md`'s job, not this task's.
       `checkmk.filesystem_history()` follows the same
       query-URL/request-body/parse-response pure-function pattern as
       the existing `filesystem_usage()` — **unverified against a live

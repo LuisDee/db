@@ -9,13 +9,29 @@ the security-model doc and spec §6.
 
 ## POC-era — build these into the code from the start
 
-- [ ] Untrusted-data discipline in every LLM prompt [T2/T4/H10]: all
+- [x] Untrusted-data discipline in every LLM prompt [T2/T4/H10]: all
       alert text and all DB-captured text (query text, object names,
       errors) delimited and labelled as data, never in the instruction
       region; system/policy prompt in a channel the data can't reach.
-- [ ] Closed-enum classifier outputs (class, severity) + host must
-      resolve to a registry key or route to do-nothing; ambiguous/
-      low-confidence → refuse, never nearest-match [H10/LLM-F12].
+      (commits: `classifier.py`'s `_ALERT_TEXT_START`/`_ALERT_TEXT_END`
+      pattern, tasks/listener/alert-classifier.md; `synthesis.py`'s
+      identical `_DATA_START`/`_DATA_END` pattern for evidence-bundle
+      content, tasks/triage/diagnosis-synthesis.md — verified during
+      the 2026-07-07 retrospective adversarial review, both modules
+      independently arrived at the same delimiter discipline)
+- [x] Closed-enum classifier/synthesis outputs (`alert_class`,
+      `severity` in `classifier.py`; `owner` in `synthesis.py`) — never
+      passed through as raw LLM text, always coerced to a known value
+      or a safe fallback [H10/LLM-F12] (same commits as above).
+- [ ] Host must resolve to a registry key or route to do-nothing;
+      ambiguous/low-confidence → refuse, never nearest-match
+      [H10/LLM-F12]. **Not done** — this is dispatcher-level wiring
+      (classifier's extracted `Classification.host` → `registry.resolve()`
+      → handle `UnknownEndpointError` as a first-class "unknown host,
+      do nothing" outcome) that doesn't exist yet; no dispatcher has
+      been built (tracked in `tasks/poc/e2e-demo.md`). Split out from
+      the bullet above during the 2026-07-07 retrospective review,
+      which had incorrectly implied both halves were the same item.
 - [ ] Alert-source allowlist in the listener [T1/C4]: only allowlisted
       bot/webhook identities are triage-actioned; everything else is
       digest-only.
