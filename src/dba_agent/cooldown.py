@@ -1,5 +1,5 @@
-"""Fingerprint dedup/cooldown for triage (docs/dba-agent-spec.md §4
-"Dedup/cooldown", tasks/triage/dedup-cooldown.md).
+"""Fingerprint dedup/cooldown and per-day LLM budget for triage
+(docs/dba-agent-spec.md §4 "Dedup/cooldown", tasks/triage/dedup-cooldown.md).
 
 Why this exists (docs/dba-agent-direction.md's alert inventory): 34% of
 real channel volume is QuestDB health-check flapping. A flapping check
@@ -17,9 +17,21 @@ Persistence is deliberately real SQLite (stdlib `sqlite3`), not an
 in-memory dict: this is the agent's own internal bookkeeping (distinct
 from, and never sharing a file or schema with, the target databases it
 monitors or the sibling diagnosis-synthesis task's storage), and it
-must survive a process restart -- the in-flight marker depends on that:
-a crash mid-investigation and a subsequent process restart must not let
-a second, concurrent/duplicate run start against the same fingerprint.
+must survive a process restart -- both the in-flight marker (so a crash
+mid-investigation can't let a second run start against the same
+fingerprint after restart) and the daily LLM-call counter (a restart
+must not silently reset today's spend) depend on that.
+
+Security note (docs/security-threat-model.md H11, M9): an attacker who
+can post into the alert channel could vary fingerprints to exhaust the
+daily LLM budget (spend/DoS -- M9), or pre-seed a colliding fingerprint
+to force a genuine CRITICAL into cooldown (targeted blinding -- H11).
+This module does not solve fingerprint-collision-resistance itself
+(that's tasks/security/threat-model-remediation.md); what it does do,
+per M9's explicit remediation ("make budget-exhaustion behavior
+explicit and alerting, not silent"), is make the daily budget a real,
+persisted, enforced limit and log loudly -- every refusal, not just the
+first -- once it's hit.
 """
 
 from __future__ import annotations
@@ -88,6 +100,18 @@ DEFAULT_CLASS_COOLDOWNS: dict[str, timedelta] = {
 # while a genuinely crashed run doesn't block its fingerprint forever.
 DEFAULT_IN_FLIGHT_STALE_AFTER = timedelta(minutes=20)
 
+# Daily LLM call budget. Reasoning -- the alert inventory
+# (docs/dba-agent-direction.md) observes ~6 alerts/day in steady state,
+# and a full triage of one fresh fingerprint costs a small, bounded
+# number of LLM calls (classify, then synthesis; a couple more if a
+# playbook's evidence needs interpretation). 200/day gives roughly an
+# order of magnitude of headroom over steady-state volume -- enough to
+# absorb a genuine alert storm (many distinct fingerprints, all
+# legitimately fresh) without the very first busy day tripping the
+# guard, while still bounding worst-case spend to a fixed, known
+# number regardless of how adversarial or noisy the channel gets.
+DEFAULT_DAILY_LLM_BUDGET = 200
+
 _ACTION_DIAGNOSE = "diagnose"
 _ACTION_COOLDOWN = "cooldown"
 _ACTION_IN_FLIGHT = "in_flight"
@@ -106,6 +130,10 @@ def _parse(raw: str) -> datetime:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed
+
+
+def _day_key(ts: datetime) -> str:
+    return ts.astimezone(timezone.utc).date().isoformat()
 
 
 @dataclass(frozen=True)
@@ -136,10 +164,10 @@ class CooldownDecision:
 
 
 class CooldownStore:
-    """SQLite-backed fingerprint cooldown and in-flight marker. One
-    instance per process; safe to construct fresh against the same file
-    after a restart (that's the crash-recovery contract the in-flight
-    marker exists for).
+    """SQLite-backed fingerprint cooldown, in-flight marker, and daily
+    LLM budget. One instance per process; safe to construct fresh
+    against the same file after a restart (that's the crash-recovery
+    contract the in-flight marker exists for).
     """
 
     def __init__(
@@ -149,12 +177,14 @@ class CooldownStore:
         default_cooldown: timedelta = DEFAULT_COOLDOWN,
         class_cooldowns: dict[str, timedelta] | None = None,
         in_flight_stale_after: timedelta = DEFAULT_IN_FLIGHT_STALE_AFTER,
+        daily_llm_budget: int = DEFAULT_DAILY_LLM_BUDGET,
     ) -> None:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._default_cooldown = default_cooldown
         self._class_cooldowns = {**DEFAULT_CLASS_COOLDOWNS, **(class_cooldowns or {})}
         self._in_flight_stale_after = in_flight_stale_after
+        self._daily_llm_budget = daily_llm_budget
         self._conn = sqlite3.connect(str(self.db_path))
         self._init_schema()
 
@@ -167,6 +197,14 @@ class CooldownStore:
                 last_diagnosed_at TEXT NOT NULL,
                 repeat_count INTEGER NOT NULL DEFAULT 0,
                 in_flight_since TEXT
+            )
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS llm_budget (
+                day TEXT PRIMARY KEY,
+                consumed INTEGER NOT NULL DEFAULT 0
             )
             """
         )
@@ -287,3 +325,52 @@ class CooldownStore:
         if row is None or row[0] is None:
             return False
         return now - _parse(row[0]) < self._in_flight_stale_after
+
+    # --- daily LLM budget ---------------------------------------------
+
+    def try_consume_llm_call(
+        self, now: datetime | None = None, *, n: int = 1, context: str | None = None
+    ) -> bool:
+        """Attempt to spend `n` of today's (UTC calendar day) LLM call
+        budget. Returns True and records the spend if there's room;
+        returns False and logs a loud warning if not -- every refusal
+        logs, for as long as the day keeps refusing (security-threat-
+        model.md M9: "make budget-exhaustion behavior explicit and
+        alerting, not silent").
+        """
+        now = now or _utcnow()
+        day = _day_key(now)
+        row = self._conn.execute(
+            "SELECT consumed FROM llm_budget WHERE day = ?", (day,)
+        ).fetchone()
+        consumed = row[0] if row else 0
+
+        if consumed + n > self._daily_llm_budget:
+            logger.warning(
+                "cooldown: daily LLM call budget exhausted "
+                'day="%s" limit=%d consumed=%d requested=%d%s -- refusing call',
+                day,
+                self._daily_llm_budget,
+                consumed,
+                n,
+                f' context="{context}"' if context else "",
+            )
+            return False
+
+        self._conn.execute(
+            """
+            INSERT INTO llm_budget (day, consumed) VALUES (?, ?)
+            ON CONFLICT(day) DO UPDATE SET consumed = excluded.consumed
+            """,
+            (day, consumed + n),
+        )
+        self._conn.commit()
+        return True
+
+    def llm_calls_consumed_today(self, now: datetime | None = None) -> int:
+        now = now or _utcnow()
+        day = _day_key(now)
+        row = self._conn.execute(
+            "SELECT consumed FROM llm_budget WHERE day = ?", (day,)
+        ).fetchone()
+        return row[0] if row else 0

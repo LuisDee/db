@@ -213,6 +213,75 @@ def test_reclaimed_stale_marker_allows_a_fresh_run_to_start_and_persist(tmp_path
     assert not store.is_in_flight(fp, now=reclaim_time + timedelta(seconds=2))
 
 
+# --- per-day LLM call budget --------------------------------------------
+
+
+def test_try_consume_allows_calls_within_budget(tmp_path: Path):
+    store = make_store(tmp_path, daily_llm_budget=3)
+
+    assert store.try_consume_llm_call(now=T0) is True
+    assert store.try_consume_llm_call(now=T0) is True
+    assert store.try_consume_llm_call(now=T0) is True
+    assert store.llm_calls_consumed_today(now=T0) == 3
+
+
+def test_try_consume_refuses_once_budget_is_exhausted(tmp_path: Path):
+    store = make_store(tmp_path, daily_llm_budget=2)
+    store.try_consume_llm_call(now=T0)
+    store.try_consume_llm_call(now=T0)
+
+    assert store.try_consume_llm_call(now=T0) is False
+
+
+def test_budget_refusal_logs_a_loud_warning_every_time(tmp_path: Path, caplog):
+    store = make_store(tmp_path, daily_llm_budget=1)
+    store.try_consume_llm_call(now=T0)
+
+    with caplog.at_level("WARNING", logger="dba_agent"):
+        store.try_consume_llm_call(now=T0)
+        store.try_consume_llm_call(now=T0)
+
+    budget_warnings = [r for r in caplog.records if "budget exhausted" in r.message]
+    assert len(budget_warnings) == 2  # every refusal logs, not just the first
+
+
+def test_budget_resets_on_a_new_utc_calendar_day(tmp_path: Path):
+    store = make_store(tmp_path, daily_llm_budget=1)
+    store.try_consume_llm_call(now=T0)
+    assert store.try_consume_llm_call(now=T0) is False
+
+    next_day = T0 + timedelta(days=1)
+    assert store.try_consume_llm_call(now=next_day) is True
+
+
+def test_budget_survives_a_brand_new_store_instance_same_file(tmp_path: Path):
+    """A restart must not silently reset today's spend."""
+    db_path = tmp_path / "cooldown.sqlite3"
+    store_process_1 = CooldownStore(db_path, daily_llm_budget=2)
+    store_process_1.try_consume_llm_call(now=T0)
+    del store_process_1
+
+    store_process_2 = CooldownStore(db_path, daily_llm_budget=2)
+    assert store_process_2.llm_calls_consumed_today(now=T0) == 1
+    assert store_process_2.try_consume_llm_call(now=T0) is True
+    assert store_process_2.try_consume_llm_call(now=T0) is False
+
+
+def test_try_consume_can_spend_more_than_one_at_once(tmp_path: Path):
+    store = make_store(tmp_path, daily_llm_budget=5)
+
+    assert store.try_consume_llm_call(now=T0, n=3) is True
+    assert store.llm_calls_consumed_today(now=T0) == 3
+    assert store.try_consume_llm_call(now=T0, n=3) is False  # would exceed budget
+    assert store.llm_calls_consumed_today(now=T0) == 3  # refused spend is not recorded
+
+
+def test_default_daily_llm_budget_is_a_positive_sensible_number(tmp_path: Path):
+    store = make_store(tmp_path)
+
+    assert store.try_consume_llm_call(now=T0) is True
+
+
 # --- misc ----------------------------------------------------------------
 
 
