@@ -286,7 +286,7 @@ this repo under `provisioning/`, reviewed like any change):
 
 | Account | Postgres | Oracle | Used by |
 |---|---|---|---|
-| `dba_agent_ro` | `pg_monitor` + `pg_read_all_stats` + `pg_read_all_settings`; no table-data grants | `CREATE SESSION`, `SELECT_CATALOG_ROLE`, `SELECT ANY DICTIONARY` | agent (triage, digest, sweep) |
+| `dba_agent_ro` | `pg_monitor` + `pg_read_all_stats` + `pg_read_all_settings`. NB `pg_read_all_stats` exposes `pg_stats` MCVs/histograms = sampled column values, and `pg_stat_activity.query` = live query literals — so this is *not* zero data exposure; harden + network-scope this credential like the apply one [threat model H5/M3] | `CREATE SESSION`, `SELECT_CATALOG_ROLE` **only** — NOT `SELECT ANY DICTIONARY` (that reads `SYS.USER$` password hashes, `LINK$`, `SOURCE$`); `SELECT_CATALOG_ROLE` excludes `USER$` [threat model C3] | agent (triage, digest, sweep) |
 | `dba_agent_apply` | target state: `EXECUTE` on the `SECURITY DEFINER` action functions only (§5.6); interim: narrow per-action grants | target state: `EXECUTE` on the `dba_actions` definer's-rights package only (§5.6) — no direct DDL privileges, never `DBA`/`SYSDBA`; interim: exactly the per-action system privileges (e.g. `ALTER TABLESPACE`) | applier (CI job only) |
 
 QuestDB: read via its SQL interface (`table_storage()` etc.) with a

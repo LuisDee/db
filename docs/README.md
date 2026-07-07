@@ -15,3 +15,8 @@ Design history for the DBA agent, in chronological order:
   Oracle/Postgres least-privilege examples, and the **production
   go-live checklist**. Required reading before wiring anything into a
   real database.
+- `security-threat-model.md` — consolidated adversarial review (CI/
+  credential, DB privilege, LLM/prompt-injection). Trust boundaries,
+  ranked findings, and the **phase-by-phase readiness verdict**. Read
+  before building the read path or the applier. Remediation is tracked
+  in `tasks/security/threat-model-remediation.md`.
