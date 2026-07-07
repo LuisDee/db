@@ -24,9 +24,10 @@ foundation/agent-skeleton
 
 poc/e2e-demo ← diagnosis-synthesis + dedup-cooldown + compose-stack
               + playbook-disk-space
+     └── apply/runbook-apply-path (v2 write path, blocked on the demo)
 ```
 
-Everything here is POC scope: prove the loop locally in containers
-before anything touches a real host. Post-POC work (live Jira, approval
-gate/applier, coverage advisor, capacity forecasting) gets registered as
+Everything except `apply/` is POC scope: prove the loop locally in
+containers before anything touches a real host. Further post-POC work
+(live Jira, coverage advisor, capacity forecasting) gets registered as
 new tasks when the POC demo passes.

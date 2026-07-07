@@ -1,7 +1,9 @@
 # AI-Assisted Postgres + Oracle Operations — System Spec
 
-> Status: **draft v0.1** — mocked up in an earlier discussion; under adversarial
-> review (see `docs/dba-alerts-bot-spec-review.md`). Expect corrections/rewrite.
+> Status: **superseded** by `dba-agent-spec.md` (v0.2). Kept for history;
+> the adversarial review that led to the rewrite is
+> `dba-alerts-bot-spec-review.md`, and the decision log is
+> `dba-agent-direction.md`.
 
 ## 1. Purpose
 
