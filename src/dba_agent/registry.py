@@ -13,6 +13,12 @@ class RegistryError(Exception):
     """Registry file is missing, malformed, or fails schema validation."""
 
 
+class UnknownEndpointError(Exception):
+    """resolve() found no endpoint for the given name — a first-class
+    outcome, not a bare KeyError, so callers can reply "unknown host"
+    rather than crashing."""
+
+
 @dataclass(frozen=True)
 class Endpoint:
     key: str
@@ -26,6 +32,15 @@ class Endpoint:
 @dataclass(frozen=True)
 class EndpointRegistry:
     endpoints: dict[str, Endpoint]
+    aliases: dict[str, str] = field(default_factory=dict)
+
+    def resolve(self, name: str) -> Endpoint:
+        if name in self.endpoints:
+            return self.endpoints[name]
+        key = self.aliases.get(name)
+        if key is not None:
+            return self.endpoints[key]
+        raise UnknownEndpointError(f"no registry entry for {name!r}")
 
 
 class _UniqueKeyLoader(yaml.SafeLoader):
@@ -79,4 +94,9 @@ def load_registry(path: Path) -> EndpointRegistry:
             aliases=tuple(spec.get("aliases") or ()),
         )
 
-    return EndpointRegistry(endpoints=endpoints)
+    aliases: dict[str, str] = {}
+    for key, endpoint in endpoints.items():
+        for alias in endpoint.aliases:
+            aliases[alias] = key
+
+    return EndpointRegistry(endpoints=endpoints, aliases=aliases)

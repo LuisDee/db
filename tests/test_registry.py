@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from dba_agent.registry import Endpoint, RegistryError, load_registry
+from dba_agent.registry import Endpoint, RegistryError, UnknownEndpointError, load_registry
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -78,3 +78,35 @@ def test_duplicate_top_level_key_raises(tmp_path: Path):
 
     with pytest.raises(RegistryError, match="duplicate"):
         load_registry(bad)
+
+
+def test_resolve_by_exact_top_level_key():
+    registry = load_registry(FIXTURES / "registry.yaml")
+
+    endpoint = registry.resolve("dev-pg")
+
+    assert endpoint.key == "dev-pg"
+    assert endpoint.engine == "postgres"
+
+
+def test_resolve_by_db_name_alias():
+    registry = load_registry(FIXTURES / "registry.yaml")
+
+    endpoint = registry.resolve("boproddb")
+
+    assert endpoint.key == "boproddb-prod"
+
+
+def test_resolve_by_hostname_alias():
+    registry = load_registry(FIXTURES / "registry.yaml")
+
+    endpoint = registry.resolve("uk01vdb301")
+
+    assert endpoint.key == "boproddb-prod"
+
+
+def test_resolve_unknown_name_raises_unknown_endpoint_error():
+    registry = load_registry(FIXTURES / "registry.yaml")
+
+    with pytest.raises(UnknownEndpointError, match="nope-does-not-exist"):
+        registry.resolve("nope-does-not-exist")
