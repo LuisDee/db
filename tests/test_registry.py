@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from dba_agent.registry import (
+    AmbiguousAliasError,
     CredentialRefError,
     Endpoint,
     RegistryError,
@@ -142,3 +143,44 @@ def test_endpoint_repr_never_contains_resolved_secret():
     endpoint.resolve_credential(env={"ORACLE_RO_BOPRODDB": "super-secret-value"})
 
     assert "super-secret-value" not in repr(endpoint)
+
+
+def test_ambiguous_alias_shared_by_two_endpoints_raises_at_load_time(tmp_path: Path):
+    bad = tmp_path / "registry.yaml"
+    bad.write_text(
+        "db-one:\n"
+        "  engine: postgres\n"
+        "  dsn: db-one:5432/app\n"
+        "  credential_ref: PG_RO_ONE\n"
+        "  tier: prod\n"
+        "  aliases: [shared-alias]\n"
+        "db-two:\n"
+        "  engine: postgres\n"
+        "  dsn: db-two:5432/app\n"
+        "  credential_ref: PG_RO_TWO\n"
+        "  tier: staging\n"
+        "  aliases: [shared-alias]\n"
+    )
+
+    with pytest.raises(AmbiguousAliasError, match="shared-alias"):
+        load_registry(bad)
+
+
+def test_alias_colliding_with_another_top_level_key_raises_at_load_time(tmp_path: Path):
+    bad = tmp_path / "registry.yaml"
+    bad.write_text(
+        "db-one:\n"
+        "  engine: postgres\n"
+        "  dsn: db-one:5432/app\n"
+        "  credential_ref: PG_RO_ONE\n"
+        "  tier: prod\n"
+        "  aliases: [db-two]\n"
+        "db-two:\n"
+        "  engine: postgres\n"
+        "  dsn: db-two:5432/app\n"
+        "  credential_ref: PG_RO_TWO\n"
+        "  tier: staging\n"
+    )
+
+    with pytest.raises(AmbiguousAliasError, match="db-two"):
+        load_registry(bad)

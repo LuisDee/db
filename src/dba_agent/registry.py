@@ -24,6 +24,14 @@ class CredentialRefError(Exception):
     """An endpoint's credential_ref names an env var that isn't set."""
 
 
+class AmbiguousAliasError(RegistryError):
+    """The same alias (or an alias colliding with another endpoint's
+    top-level key) is claimed by more than one endpoint. Raised at load
+    time, not lookup time, so a bad registry file can never even be
+    loaded — resolve() must never have to guess which endpoint an alias
+    means."""
+
+
 @dataclass(frozen=True)
 class Endpoint:
     key: str
@@ -115,6 +123,16 @@ def load_registry(path: Path) -> EndpointRegistry:
     aliases: dict[str, str] = {}
     for key, endpoint in endpoints.items():
         for alias in endpoint.aliases:
+            if alias in endpoints:
+                raise AmbiguousAliasError(
+                    f"alias {alias!r} on endpoint {key!r} collides with a "
+                    "top-level endpoint key of the same name"
+                )
+            claimed_by = aliases.get(alias)
+            if claimed_by is not None and claimed_by != key:
+                raise AmbiguousAliasError(
+                    f"alias {alias!r} is claimed by both {claimed_by!r} and {key!r}"
+                )
             aliases[alias] = key
 
     return EndpointRegistry(endpoints=endpoints, aliases=aliases)
